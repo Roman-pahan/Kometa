@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Вход — Обмен валют</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="site">
+    <div class="container inner">
+      <a class="logo" href="/"><span class="dot"></span><span id="siteName">Обмен валют</span></a>
+      <nav class="main" id="nav"></nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <div class="auth-box card">
+      <div class="tabs">
+        <button id="tabLogin" class="active">Вход</button>
+        <button id="tabRegister">Регистрация</button>
+      </div>
+
+      <form id="loginForm">
+        <label class="field"><span>Email</span><input type="email" id="loginEmail" required autocomplete="email"></label>
+        <label class="field"><span>Пароль</span><input type="password" id="loginPassword" required autocomplete="current-password"></label>
+        <div class="msg" id="loginMsg"></div>
+        <button class="btn primary" type="submit" style="width:100%">Войти</button>
+        <p class="mt small" style="text-align:center"><a href="#" id="forgotLink">Забыли пароль?</a></p>
+      </form>
+
+      <form id="forgotForm" style="display:none">
+        <p class="muted small" style="margin-bottom:14px">Укажите email, на который зарегистрирован аккаунт, —
+          мы пришлём ссылку для сброса пароля.</p>
+        <label class="field"><span>Email</span><input type="email" id="forgotEmail" required autocomplete="email"></label>
+        <div class="msg" id="forgotMsg"></div>
+        <button class="btn primary" type="submit" style="width:100%">Отправить ссылку</button>
+        <p class="mt small" style="text-align:center"><a href="#" id="backToLogin">← Назад ко входу</a></p>
+      </form>
+
+      <form id="registerForm" style="display:none">
+        <label class="field"><span>Имя</span><input type="text" id="regName" autocomplete="name"></label>
+        <label class="field"><span>Email</span><input type="email" id="regEmail" required autocomplete="email"></label>
+        <label class="field"><span>Пароль (минимум 6 символов)</span><input type="password" id="regPassword" required minlength="6" autocomplete="new-password"></label>
+        <div class="msg" id="regMsg"></div>
+        <button class="btn success" type="submit" style="width:100%">Зарегистрироваться</button>
+      </form>
+    </div>
+  </main>
+
+  <script src="/common.js"></script>
+  <script>
+    renderHeader('auth');
+    const next = new URLSearchParams(location.search).get('next') || '/';
+
+    function switchTab(login) {
+      document.getElementById('tabLogin').classList.toggle('active', login);
+      document.getElementById('tabRegister').classList.toggle('active', !login);
+      document.getElementById('loginForm').style.display = login ? 'block' : 'none';
+      document.getElementById('registerForm').style.display = login ? 'none' : 'block';
+      document.getElementById('forgotForm').style.display = 'none';
+    }
+
+    document.getElementById('forgotLink').onclick = (e) => {
+      e.preventDefault();
+      document.getElementById('loginForm').style.display = 'none';
+      document.getElementById('forgotForm').style.display = 'block';
+      document.getElementById('forgotEmail').value = document.getElementById('loginEmail').value;
+    };
+    document.getElementById('backToLogin').onclick = (e) => { e.preventDefault(); switchTab(true); };
+
+    document.getElementById('forgotForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const msg = document.getElementById('forgotMsg');
+      hideMsg(msg);
+      try {
+        const r = await api('/api/forgot-password', 'POST', {
+          email: document.getElementById('forgotEmail').value,
+        });
+        showMsg(msg, r.message, 'ok');
+      } catch (err) { showMsg(msg, err.message); }
+    };
+    document.getElementById('tabLogin').onclick = () => switchTab(true);
+    document.getElementById('tabRegister').onclick = () => switchTab(false);
+
+    document.getElementById('loginForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const msg = document.getElementById('loginMsg');
+      hideMsg(msg);
+      try {
+        const r = await api('/api/login', 'POST', {
+          email: document.getElementById('loginEmail').value,
+          password: document.getElementById('loginPassword').value,
+        });
+        location.href = r.is_admin ? '/admin.html' : next;
+      } catch (err) { showMsg(msg, err.message); }
+    };
+
+    document.getElementById('registerForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const msg = document.getElementById('regMsg');
+      hideMsg(msg);
+      try {
+        await api('/api/register', 'POST', {
+          name: document.getElementById('regName').value,
+          email: document.getElementById('regEmail').value,
+          password: document.getElementById('regPassword').value,
+        });
+        location.href = next;
+      } catch (err) { showMsg(msg, err.message); }
+    };
+  </script>
+</body>
+</html>

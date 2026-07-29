@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Чат с оператором — Обмен валют</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="site">
+    <div class="container inner">
+      <a class="logo" href="/"><span class="dot"></span><span id="siteName">Обмен валют</span></a>
+      <nav class="main" id="nav"></nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="section">
+      <div class="flex">
+        <h2>Чат с оператором</h2>
+        <span class="badge done" title="Сообщения шифруются в вашем браузере. Сервер видит только шифротекст.">🔒 Сквозное шифрование</span>
+      </div>
+      <div class="card mt">
+        <p class="msg" id="chatNotice" style="margin-top:0"></p>
+        <div class="chat-box" id="chatBox"></div>
+        <div class="flex mt">
+          <textarea id="chatInput" class="grow" rows="2" placeholder="Ваше сообщение..." style="min-height:44px"></textarea>
+          <button class="btn primary" id="sendBtn">Отправить</button>
+        </div>
+        <p class="muted small mt">🔒 Сообщения шифруются на вашем устройстве (AES-256) и расшифровываются только у оператора.
+          История привязана к этому браузеру — при смене устройства старые сообщения прочитать нельзя.</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="/common.js"></script>
+  <script src="/chat-crypto.js"></script>
+  <script>
+    let sharedKey = null;
+    let lastId = 0;
+    let pollTimer = null;
+
+    function addBubble(text, mine, at, failed) {
+      const box = document.getElementById('chatBox');
+      const div = document.createElement('div');
+      div.className = 'bubble ' + (mine ? 'me' : 'them') + (failed ? ' failed' : '');
+      div.textContent = text;
+      const time = document.createElement('div');
+      time.className = 'time';
+      time.textContent = fmtDate(at);
+      div.appendChild(time);
+      box.appendChild(div);
+      box.scrollTop = box.scrollHeight;
+    }
+
+    async function fetchNew() {
+      if (!sharedKey) return;
+      const { messages } = await api('/api/chat/messages?after=' + lastId);
+      for (const m of messages) {
+        lastId = Math.max(lastId, m.id);
+        const text = await ChatCrypto.decrypt(sharedKey, m.iv, m.ciphertext);
+        addBubble(text ?? '🔒 [не удалось расшифровать — сообщение с другого устройства]',
+          m.sender === 'user', m.created_at, text === null);
+      }
+    }
+
+    async function init() {
+      const me = await renderHeader('chat');
+      if (!me) { location.href = '/auth.html?next=' + encodeURIComponent('/chat.html'); return; }
+
+      const notice = document.getElementById('chatNotice');
+      // 1. Свой ключ (создаётся один раз, живёт в этом браузере)
+      const { priv, pubJwk } = await ChatCrypto.loadOrCreateKeyPair('chat_key_user_' + me.id);
+      await api('/api/chat/pubkey', 'POST', { pubkey: pubJwk });
+
+      // 2. Ключ оператора
+      const { pubkey: adminPub } = await api('/api/chat/peer-key');
+      if (!adminPub) {
+        showMsg(notice, 'Оператор ещё не подключил защищённый чат. Загляните позже или напишите в Telegram.', 'error');
+        document.getElementById('sendBtn').disabled = true;
+        return;
+      }
+      sharedKey = await ChatCrypto.deriveSharedKey(priv, adminPub);
+
+      await fetchNew();
+      pollTimer = setInterval(() => fetchNew().catch(() => {}), 4000);
+
+      document.getElementById('sendBtn').onclick = send;
+      document.getElementById('chatInput').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+      });
+    }
+
+    async function send() {
+      const input = document.getElementById('chatInput');
+      const text = input.value.trim();
+      if (!text || !sharedKey) return;
+      const { iv, ciphertext } = await ChatCrypto.encrypt(sharedKey, text);
+      try {
+        await api('/api/chat/messages', 'POST', { iv, ciphertext });
+        input.value = '';
+        await fetchNew();
+      } catch (e) { alert(e.message); }
+    }
+
+    init();
+  </script>
+</body>
+</html>

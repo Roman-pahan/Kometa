@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Обмен валют — баты, рубли, USDT, юани (Alipay)</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="site">
+    <div class="container inner">
+      <a class="logo" href="/"><span class="dot"></span><span id="siteName">Обмен валют</span></a>
+      <nav class="main" id="nav"></nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="hero">
+      <h1>Обмен валют: <span>баты, рубли, USDT, юани</span></h1>
+      <p>Выгодный курс по направлениям THB ↔ RUB, THB ↔ USDT и пополнение / вывод юаней через Alipay.
+        Оставьте заявку — и мы свяжемся с вами в Telegram.</p>
+      <div class="flex mt">
+        <a class="btn primary" href="#calc">Рассчитать обмен</a>
+        <a class="btn" id="tgBtnTop" href="#" target="_blank" rel="noopener">✈️ Написать в Telegram</a>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Текущие курсы</h2>
+      <p class="muted small" id="ratesUpdated"></p>
+      <div class="rates-grid mt" id="ratesGrid"></div>
+    </section>
+
+    <section class="section" id="calc">
+      <h2>Калькулятор обмена</h2>
+      <div class="card">
+        <div class="calc">
+          <div>
+            <label class="field">
+              <span>Направление обмена</span>
+              <select id="dirSelect"></select>
+            </label>
+            <label class="field">
+              <span>Вы отдаёте (<b id="fromCurLabel"></b>)</span>
+              <input type="number" id="amountFrom" min="0" step="any" placeholder="Введите сумму">
+            </label>
+            <p class="muted small" id="limitsLine"></p>
+          </div>
+          <div>
+            <span class="muted small">Вы получаете</span>
+            <div class="result"><span id="amountTo">0</span> <span id="toCurLabel"></span></div>
+            <div class="rate-line" id="rateLine"></div>
+            <div class="mt">
+              <button class="btn success" id="createOrderBtn">Оставить заявку</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Форма заявки (раскрывается) -->
+        <div id="orderForm" style="display:none" class="mt">
+          <hr style="border-color: var(--border); margin-bottom: 18px;">
+          <div class="grid2">
+            <label class="field">
+              <span>Ваш Telegram для связи *</span>
+              <input type="text" id="orderContact" placeholder="@username">
+            </label>
+            <label class="field">
+              <span>Реквизиты для получения (карта / кошелёк / Alipay)</span>
+              <input type="text" id="orderRequisites" placeholder="Например: карта 2200 ...">
+            </label>
+          </div>
+          <label class="field">
+            <span>Комментарий</span>
+            <textarea id="orderComment" placeholder="Дополнительная информация (необязательно)"></textarea>
+          </label>
+          <div class="msg" id="orderMsg"></div>
+          <button class="btn primary" id="submitOrderBtn">Отправить заявку</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Как это работает</h2>
+      <div class="steps">
+        <div class="step"><div class="num">1</div><b>Рассчитайте сумму</b><p class="muted small">Выберите направление и введите сумму — курс обновляется автоматически.</p></div>
+        <div class="step"><div class="num">2</div><b>Оставьте заявку</b><p class="muted small">Зарегистрируйтесь и отправьте заявку с вашим Telegram.</p></div>
+        <div class="step"><div class="num">3</div><b>Мы свяжемся с вами</b><p class="muted small">Оператор напишет в Telegram, подтвердит курс и реквизиты.</p></div>
+        <div class="step"><div class="num">4</div><b>Обмен выполнен</b><p class="muted small">Статус заявки отслеживается в личном кабинете.</p></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site">
+    <div class="container flex">
+      <span id="footerName">Обмен валют</span>
+      <span class="grow"></span>
+      <a id="tgBtnBottom" href="#" target="_blank" rel="noopener">Telegram</a>
+    </div>
+  </footer>
+
+  <script src="/common.js"></script>
+  <script>
+    let PUB = { directions: [] };
+    let me = null;
+
+    function currentDir() {
+      const id = Number(document.getElementById('dirSelect').value);
+      return PUB.directions.find(d => d.id === id) || null;
+    }
+
+    function recalc() {
+      const dir = currentDir();
+      const amount = Number(document.getElementById('amountFrom').value) || 0;
+      const out = document.getElementById('amountTo');
+      const rateLine = document.getElementById('rateLine');
+      const limits = document.getElementById('limitsLine');
+      if (!dir) { out.textContent = '0'; return; }
+      document.getElementById('fromCurLabel').textContent = dir.from_cur;
+      document.getElementById('toCurLabel').textContent = dir.to_cur;
+      limits.textContent = (dir.min_from ? `Мин: ${fmtAmount(dir.min_from)} ${dir.from_cur}` : '') +
+        (dir.max_from ? ` · Макс: ${fmtAmount(dir.max_from)} ${dir.from_cur}` : '');
+      if (dir.rate == null) {
+        out.textContent = '—';
+        rateLine.textContent = 'Курс временно недоступен';
+        return;
+      }
+      out.textContent = fmtAmount(amount * dir.rate);
+      rateLine.textContent = `Курс: 1 ${dir.from_cur} = ${fmtRate(dir.rate)} ${dir.to_cur}` +
+        (dir.rate < 0.05 ? ` (1 ${dir.to_cur} ≈ ${fmtRate(1 / dir.rate)} ${dir.from_cur})` : '');
+    }
+
+    function renderRates() {
+      const grid = document.getElementById('ratesGrid');
+      grid.innerHTML = PUB.directions.map(d => `
+        <div class="rate-card" data-id="${d.id}">
+          <div class="pair">${esc(d.label)}</div>
+          <div class="value">${d.rate != null ? '1 ' + esc(d.from_cur) + ' = ' + fmtRate(d.rate) + ' ' + esc(d.to_cur) : 'уточняйте'}</div>
+          <div class="note">${esc(d.payment_note)}</div>
+        </div>
+      `).join('');
+      grid.querySelectorAll('.rate-card').forEach(card => {
+        card.onclick = () => {
+          document.getElementById('dirSelect').value = card.dataset.id;
+          recalc();
+          document.getElementById('calc').scrollIntoView({ behavior: 'smooth' });
+        };
+      });
+    }
+
+    async function init() {
+      me = await renderHeader('index');
+      PUB = await api('/api/public');
+      document.getElementById('siteName').textContent = PUB.site_name;
+      document.getElementById('footerName').textContent = PUB.site_name;
+      document.title = PUB.site_name + ' — баты, рубли, USDT, юани (Alipay)';
+      const tg = 'https://t.me/' + PUB.telegram;
+      document.getElementById('tgBtnTop').href = tg;
+      document.getElementById('tgBtnBottom').href = tg;
+      document.getElementById('ratesUpdated').textContent = PUB.rates.updatedAt
+        ? 'Курсы обновлены: ' + new Date(PUB.rates.updatedAt).toLocaleString('ru-RU')
+        : 'Курсы загружаются...';
+      const sel = document.getElementById('dirSelect');
+      sel.innerHTML = PUB.directions.map(d => `<option value="${d.id}">${esc(d.label)}</option>`).join('');
+      renderRates();
+      recalc();
+
+      sel.onchange = recalc;
+      document.getElementById('amountFrom').oninput = recalc;
+
+      document.getElementById('createOrderBtn').onclick = () => {
+        if (!me) { location.href = '/auth.html?next=' + encodeURIComponent('/#calc'); return; }
+        document.getElementById('orderForm').style.display = 'block';
+        document.getElementById('orderContact').focus();
+      };
+
+      document.getElementById('submitOrderBtn').onclick = async () => {
+        const msg = document.getElementById('orderMsg');
+        hideMsg(msg);
+        const dir = currentDir();
+        try {
+          const r = await api('/api/orders', 'POST', {
+            direction_id: dir.id,
+            amount_from: Number(document.getElementById('amountFrom').value),
+            contact: document.getElementById('orderContact').value,
+            requisites: document.getElementById('orderRequisites').value,
+            comment: document.getElementById('orderComment').value,
+          });
+          showMsg(msg, `Заявка №${r.id} создана! Перенаправляем в личный кабинет...`, 'ok');
+          setTimeout(() => location.href = '/cabinet.html', 1200);
+        } catch (e) {
+          showMsg(msg, e.message);
+        }
+      };
+    }
+    init();
+  </script>
+</body>
+</html>

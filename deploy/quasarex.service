@@ -1,0 +1,20 @@
+[Unit]
+Description=Quasarex exchange site
+After=network.target
+
+[Service]
+Type=simple
+User=quasarex
+WorkingDirectory=/opt/quasarex
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+Environment=PORT=3210
+# Ключ шифрования фото верификации. Держите его ЗДЕСЬ, а не в файле secret.key,
+# тогда при краже диска с папкой data файлы не расшифровать.
+# Сгенерировать: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+Environment=UPLOADS_KEY=ЗАМЕНИТЕ_НА_64_HEX_СИМВОЛА
+
+[Install]
+WantedBy=multi-user.target

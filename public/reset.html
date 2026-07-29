@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Новый пароль — Обмен валют</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="site">
+    <div class="container inner">
+      <a class="logo" href="/"><span class="dot"></span><span id="siteName">Обмен валют</span></a>
+      <nav class="main" id="nav"></nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <div class="auth-box card">
+      <h2>Новый пароль</h2>
+
+      <div id="invalidBox" style="display:none">
+        <p class="msg error" style="display:block">Ссылка недействительна или устарела.</p>
+        <p class="mt"><a class="btn primary" href="/auth.html">Запросить новую ссылку</a></p>
+      </div>
+
+      <form id="resetForm" style="display:none">
+        <label class="field"><span>Новый пароль (минимум 6 символов)</span>
+          <input type="password" id="newPass" required minlength="6" autocomplete="new-password"></label>
+        <label class="field"><span>Повторите пароль</span>
+          <input type="password" id="newPass2" required minlength="6" autocomplete="new-password"></label>
+        <div class="msg" id="resetMsg"></div>
+        <button class="btn primary" type="submit" style="width:100%">Сохранить пароль</button>
+      </form>
+
+      <div id="doneBox" style="display:none">
+        <p class="msg ok" style="display:block">Пароль изменён! Теперь войдите с новым паролем.</p>
+        <p class="mt"><a class="btn success" href="/auth.html">Войти</a></p>
+      </div>
+    </div>
+  </main>
+
+  <script src="/common.js"></script>
+  <script>
+    renderHeader('auth');
+    const token = new URLSearchParams(location.search).get('token') || '';
+
+    async function init() {
+      const { valid } = await api('/api/reset-password/' + encodeURIComponent(token));
+      document.getElementById(valid ? 'resetForm' : 'invalidBox').style.display = 'block';
+    }
+
+    document.getElementById('resetForm').onsubmit = async (e) => {
+      e.preventDefault();
+      const msg = document.getElementById('resetMsg');
+      hideMsg(msg);
+      const p1 = document.getElementById('newPass').value;
+      const p2 = document.getElementById('newPass2').value;
+      if (p1 !== p2) return showMsg(msg, 'Пароли не совпадают');
+      try {
+        await api('/api/reset-password', 'POST', { token, password: p1 });
+        document.getElementById('resetForm').style.display = 'none';
+        document.getElementById('doneBox').style.display = 'block';
+      } catch (err) { showMsg(msg, err.message); }
+    };
+    init();
+  </script>
+</body>
+</html>

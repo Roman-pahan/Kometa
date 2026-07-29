@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Админка — Обмен валют</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="site">
+    <div class="container inner">
+      <a class="logo" href="/"><span class="dot"></span><span id="siteName">Обмен валют</span></a>
+      <nav class="main" id="nav"></nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="section">
+      <h2>Панель администратора</h2>
+      <div class="tabs mt">
+        <button data-tab="orders" class="active">Заявки</button>
+        <button data-tab="clients">Клиенты</button>
+        <button data-tab="verify">Верификация <span class="badge new" id="verifyCount" style="display:none">0</span></button>
+        <button data-tab="chat">Чат 🔒 <span class="badge new" id="chatCount" style="display:none">0</span></button>
+        <button data-tab="directions">Курсы и направления</button>
+        <button data-tab="settings">Настройки</button>
+      </div>
+
+      <!-- Заявки -->
+      <div id="tab-orders" class="card">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>№</th><th>Дата</th><th>Клиент</th><th>Направление</th><th>Отдаёт</th><th>Получает</th><th>Курс</th><th>Контакт</th><th>Реквизиты</th><th>Статус</th><th>Комментарий</th></tr>
+            </thead>
+            <tbody id="ordersBody"></tbody>
+          </table>
+        </div>
+        <p class="muted mt" id="ordersEmpty" style="display:none">Заявок пока нет.</p>
+      </div>
+
+      <!-- Клиенты -->
+      <div id="tab-clients" class="card" style="display:none">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>№</th><th>Email</th><th>ФИО</th><th>Telegram</th><th>Телефон (банк)</th><th>Верификация</th><th>Заявок</th><th>Регистрация</th></tr>
+            </thead>
+            <tbody id="clientsBody"></tbody>
+          </table>
+        </div>
+        <p class="muted mt" id="clientsEmpty" style="display:none">Клиентов пока нет.</p>
+      </div>
+
+      <!-- Верификация -->
+      <div id="tab-verify" style="display:none">
+        <div id="verifyList"></div>
+        <p class="muted" id="verifyEmpty" style="display:none">Запросов на верификацию пока нет.</p>
+      </div>
+
+      <!-- Чат -->
+      <div id="tab-chat" style="display:none">
+        <div class="flex" style="margin-bottom:12px">
+          <span class="muted small">🔒 Сообщения расшифровываются только в этом браузере. Ключ хранится локально.</span>
+          <span class="grow"></span>
+          <button class="btn small" id="exportChatKeyBtn" title="Сохраните ключ, чтобы читать чат с другого устройства">Экспорт ключа</button>
+          <button class="btn small" id="importChatKeyBtn">Импорт ключа</button>
+        </div>
+        <div class="chat-layout">
+          <div id="threadList"></div>
+          <div class="card" id="chatPane" style="display:none">
+            <div class="flex"><b id="chatPeerName"></b><span class="grow"></span><span class="muted small" id="chatPeerInfo"></span></div>
+            <div class="chat-box mt" id="adminChatBox"></div>
+            <div class="flex mt">
+              <textarea id="adminChatInput" class="grow" rows="2" placeholder="Ответ клиенту..." style="min-height:44px"></textarea>
+              <button class="btn primary" id="adminSendBtn">Отправить</button>
+            </div>
+          </div>
+        </div>
+        <p class="muted" id="chatEmpty" style="display:none">Диалогов пока нет — клиенты ещё не писали в чат.</p>
+      </div>
+
+      <!-- Курсы и направления -->
+      <div id="tab-directions" style="display:none">
+        <div class="flex" style="margin-bottom:16px">
+          <span class="muted small" id="dirRatesInfo"></span>
+          <span class="grow"></span>
+          <button class="btn small" id="restoreDefaultsBtn" title="Вернуть удалённые стандартные направления (THB/RUB/USDT/CNY)">↩️ Восстановить стандартные</button>
+          <button class="btn small" id="refreshRatesBtn2">🔄 Обновить базовые курсы</button>
+        </div>
+        <div class="dir-grid" id="dirsGrid"></div>
+
+        <div class="card mt">
+          <h2 style="font-size:18px">Добавить направление</h2>
+          <div class="grid2 mt">
+            <label class="field"><span>Отдают (код валюты, напр. THB)</span><input id="newFrom" placeholder="THB"></label>
+            <label class="field"><span>Получают (код валюты, напр. RUB)</span><input id="newTo" placeholder="RUB"></label>
+            <label class="field"><span>Название (необязательно)</span><input id="newLabel" placeholder="Баты → Рубли"></label>
+            <label class="field"><span>Наценка, %</span><input id="newMarkup" type="number" step="any" value="2"></label>
+          </div>
+          <div class="msg" id="dirMsg"></div>
+          <button class="btn success" id="addDirBtn">Добавить</button>
+        </div>
+      </div>
+
+      <!-- Настройки -->
+      <div id="tab-settings" style="display:none">
+        <div class="card">
+          <h2 style="font-size:18px">Сайт</h2>
+          <div class="grid2 mt">
+            <label class="field"><span>Название сайта</span><input id="setName"></label>
+            <label class="field"><span>Telegram для связи (без @)</span><input id="setTelegram" placeholder="username"></label>
+          </div>
+          <div class="msg" id="setMsg"></div>
+          <button class="btn primary" id="saveSettingsBtn">Сохранить</button>
+        </div>
+
+        <div class="card mt">
+          <h2 style="font-size:18px">Почта (SMTP) — для писем «забыли пароль»</h2>
+          <p class="muted small mt" id="mailStatus"></p>
+          <div class="grid2 mt">
+            <label class="field"><span>SMTP-хост (например smtp.yandex.ru)</span><input id="smtpHost"></label>
+            <label class="field"><span>Порт (465 — SSL, 587 — STARTTLS)</span><input id="smtpPort" type="number" placeholder="465"></label>
+            <label class="field"><span>Логин (email отправителя)</span><input id="smtpUser" placeholder="noreply@site.ru"></label>
+            <label class="field"><span>Пароль (пусто = не менять)</span><input id="smtpPass" type="password" autocomplete="new-password"></label>
+            <label class="field"><span>Поле «От кого» (необязательно)</span><input id="smtpFrom" placeholder="Обмен валют <noreply@site.ru>"></label>
+          </div>
+          <div class="msg" id="smtpMsg"></div>
+          <div class="flex">
+            <button class="btn primary" id="saveSmtpBtn">Сохранить SMTP</button>
+            <button class="btn" id="testMailBtn">✉️ Отправить тестовое письмо себе</button>
+          </div>
+        </div>
+
+        <div class="card mt">
+          <h2 style="font-size:18px">Telegram-уведомления (новые заявки, верификации, чат)</h2>
+          <p class="muted small mt" id="tgStatus"></p>
+          <ol class="muted small mt" style="padding-left:20px">
+            <li>Создайте бота: напишите <a href="https://t.me/BotFather" target="_blank" rel="noopener">@BotFather</a> → /newbot → скопируйте токен.</li>
+            <li>Напишите своему боту любое сообщение (например /start).</li>
+            <li>Вставьте токен ниже и нажмите «Определить chat ID».</li>
+          </ol>
+          <div class="grid2 mt">
+            <label class="field"><span>Токен бота (пусто = не менять)</span><input id="tgToken" type="password" placeholder="1234567890:AA..." autocomplete="off"></label>
+            <label class="field"><span>Chat ID (заполнится автоматически)</span><input id="tgChatId" placeholder="—"></label>
+          </div>
+          <div class="msg" id="tgMsg"></div>
+          <div class="flex">
+            <button class="btn primary" id="tgDetectBtn">Определить chat ID</button>
+            <button class="btn" id="tgSaveBtn">Сохранить</button>
+            <button class="btn" id="tgTestBtn">🔔 Тестовое уведомление</button>
+          </div>
+        </div>
+
+        <div class="card mt">
+          <h2 style="font-size:18px">Смена пароля администратора</h2>
+          <div class="grid2 mt">
+            <label class="field"><span>Текущий пароль</span><input id="pwCurrent" type="password" autocomplete="current-password"></label>
+            <label class="field"><span>Новый пароль (минимум 8 символов)</span><input id="pwNew" type="password" autocomplete="new-password"></label>
+          </div>
+          <div class="msg" id="pwMsg"></div>
+          <button class="btn danger" id="changePwBtn">Сменить пароль</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/common.js"></script>
+  <script src="/chat-crypto.js"></script>
+  <script>
+    const STATUS_OPTIONS = Object.entries(STATUS_LABELS);
+
+    // Переключение вкладок
+    document.querySelectorAll('.tabs button').forEach(btn => {
+      btn.onclick = () => {
+        document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b === btn));
+        ['orders', 'clients', 'verify', 'chat', 'directions', 'settings'].forEach(t =>
+          document.getElementById('tab-' + t).style.display = t === btn.dataset.tab ? 'block' : 'none');
+      };
+    });
+
+    // ---------- Заявки ----------
+    async function loadOrders() {
+      const { orders } = await api('/api/admin/orders');
+      document.getElementById('ordersEmpty').style.display = orders.length ? 'none' : 'block';
+      document.getElementById('ordersBody').innerHTML = orders.map(o => `
+        <tr data-id="${o.id}">
+          <td>${o.id}</td>
+          <td>${fmtDate(o.created_at)}</td>
+          <td>${esc(o.user_email)} ${o.user_verify === 'approved' ? '<span title="Клиент верифицирован">✅</span>' : ''}</td>
+          <td>${esc(o.direction_label)}</td>
+          <td><b>${fmtAmount(o.amount_from)} ${esc(o.from_cur)}</b></td>
+          <td><b>${fmtAmount(o.amount_to)} ${esc(o.to_cur)}</b></td>
+          <td>${fmtRate(o.rate)}</td>
+          <td>${esc(o.contact)}</td>
+          <td class="muted small">${esc(o.requisites || '')}${o.comment ? '<br>💬 ' + esc(o.comment) : ''}</td>
+          <td>
+            <select class="statusSel" style="min-width:140px">
+              ${STATUS_OPTIONS.map(([v, l]) => `<option value="${v}" ${o.status === v ? 'selected' : ''}>${l}</option>`).join('')}
+            </select>
+          </td>
+          <td><input class="adminComment" value="${esc(o.admin_comment || '')}" placeholder="Комментарий клиенту" style="min-width:150px"></td>
+        </tr>
+      `).join('');
+
+      document.querySelectorAll('#ordersBody tr').forEach(tr => {
+        const id = tr.dataset.id;
+        tr.querySelector('.statusSel').onchange = (e) =>
+          api('/api/admin/orders/' + id, 'PATCH', { status: e.target.value }).catch(err => alert(err.message));
+        tr.querySelector('.adminComment').onchange = (e) =>
+          api('/api/admin/orders/' + id, 'PATCH', { admin_comment: e.target.value }).catch(err => alert(err.message));
+      });
+    }
+
+    // ---------- Клиенты ----------
+    const VERIFY_LABELS = { none: 'Не пройдена', pending: 'На проверке', approved: 'Подтверждена', rejected: 'Отклонена' };
+    const VERIFY_BADGE = { none: 'cancelled', pending: 'awaiting_payment', approved: 'done', rejected: 'cancelled' };
+
+    async function loadClients() {
+      const { clients } = await api('/api/admin/clients');
+      document.getElementById('clientsEmpty').style.display = clients.length ? 'none' : 'block';
+      document.getElementById('clientsBody').innerHTML = clients.map(c => {
+        const tg = c.telegram || c.last_order_contact || '';
+        const tgLink = tg ? `<a href="https://t.me/${esc(tg.replace(/^@/, ''))}" target="_blank" rel="noopener">@${esc(tg.replace(/^@/, ''))}</a>` : '<span class="muted">—</span>';
+        return `
+        <tr>
+          <td>${c.id}</td>
+          <td>${esc(c.email)}</td>
+          <td>${esc(c.full_name || c.name || '') || '<span class="muted">—</span>'}</td>
+          <td>${tgLink}</td>
+          <td>${esc(c.phone || '') || '<span class="muted">—</span>'}</td>
+          <td><span class="badge ${VERIFY_BADGE[c.verify_status]}">${VERIFY_LABELS[c.verify_status]}</span></td>
+          <td>${c.orders_count}</td>
+          <td>${fmtDate(c.created_at)}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    // ---------- Верификация ----------
+
+    async function loadVerifications() {
+      const { users } = await api('/api/admin/verifications');
+      const pending = users.filter(u => u.verify_status === 'pending').length;
+      const counter = document.getElementById('verifyCount');
+      counter.style.display = pending ? 'inline-block' : 'none';
+      counter.textContent = pending;
+      document.getElementById('verifyEmpty').style.display = users.length ? 'none' : 'block';
+      document.getElementById('verifyList').innerHTML = users.map(u => `
+        <div class="card" style="margin-bottom:16px" data-id="${u.id}">
+          <div class="flex">
+            <b>${esc(u.email)}</b>
+            <span class="badge ${VERIFY_BADGE[u.verify_status]}">${VERIFY_LABELS[u.verify_status]}</span>
+            <span class="grow"></span>
+            <span class="muted small">${u.verify_submitted_at ? 'Отправлено: ' + fmtDate(u.verify_submitted_at) : ''}</span>
+          </div>
+          <div class="flex mt" style="gap:20px">
+            <span><span class="muted small">ФИО:</span> <b>${esc(u.full_name || '—')}</b></span>
+            <span><span class="muted small">Телефон (банк):</span> <b>${esc(u.phone || '—')}</b></span>
+            <span><span class="muted small">Telegram:</span> ${u.telegram ? `<a href="https://t.me/${esc(u.telegram)}" target="_blank" rel="noopener">@${esc(u.telegram)}</a>` : '—'}</span>
+          </div>
+          <div class="grid2 mt">
+            <div>
+              <span class="muted small">Паспорт</span><br>
+              ${u.has_passport ? `<img class="verify-doc" src="/api/admin/verifications/${u.id}/file/passport" onclick="window.open(this.src)">` : '<span class="muted">нет файла</span>'}
+            </div>
+            <div>
+              <span class="muted small">Фото лица</span><br>
+              ${u.has_selfie ? `<img class="verify-doc" src="/api/admin/verifications/${u.id}/file/selfie" onclick="window.open(this.src)">` : '<span class="muted">нет файла</span>'}
+            </div>
+          </div>
+          <div class="flex mt">
+            <button class="btn success small approveBtn">✅ Подтвердить</button>
+            <button class="btn danger small rejectBtn">Отклонить</button>
+            <input class="rejectReason grow" placeholder="Причина отклонения (увидит клиент)" value="${esc(u.verify_comment || '')}">
+          </div>
+        </div>
+      `).join('');
+
+      document.querySelectorAll('#verifyList .card').forEach(card => {
+        const id = card.dataset.id;
+        card.querySelector('.approveBtn').onclick = () =>
+          api('/api/admin/verifications/' + id, 'PATCH', { status: 'approved' })
+            .then(() => { loadVerifications(); loadOrders(); loadClients(); }).catch(e => alert(e.message));
+        card.querySelector('.rejectBtn').onclick = () => {
+          const reason = card.querySelector('.rejectReason').value.trim();
+          if (!reason) return alert('Укажите причину отклонения — клиент увидит её в кабинете');
+          api('/api/admin/verifications/' + id, 'PATCH', { status: 'rejected', comment: reason })
+            .then(() => { loadVerifications(); loadOrders(); loadClients(); }).catch(e => alert(e.message));
+        };
+      });
+    }
+
+    // ---------- Чат (E2E) ----------
+    const ADMIN_KEY_STORAGE = 'chat_key_admin';
+    let adminPriv = null;
+    let activeThread = null;   // { id, email, sharedKey, lastId }
+    let chatPollTimer = null;
+
+    async function initChatKeys() {
+      const { priv, pubJwk } = await ChatCrypto.loadOrCreateKeyPair(ADMIN_KEY_STORAGE);
+      adminPriv = priv;
+      await api('/api/chat/pubkey', 'POST', { pubkey: pubJwk });
+    }
+
+    async function loadThreads() {
+      const { threads } = await api('/api/admin/chat/threads');
+      const unreadTotal = threads.reduce((s, t) => s + t.unread, 0);
+      const counter = document.getElementById('chatCount');
+      counter.style.display = unreadTotal ? 'inline-block' : 'none';
+      counter.textContent = unreadTotal;
+      document.getElementById('chatEmpty').style.display = threads.length ? 'none' : 'block';
+      const list = document.getElementById('threadList');
+      list.innerHTML = threads.map(t => `
+        <div class="thread-item ${activeThread && activeThread.id === t.id ? 'active' : ''}" data-id="${t.id}">
+          <div class="flex"><b>${esc(t.full_name || t.email)}</b>
+            ${t.unread ? `<span class="badge new">${t.unread}</span>` : ''}</div>
+          <div class="muted small">${esc(t.email)}${t.telegram ? ' · @' + esc(t.telegram) : ''}</div>
+        </div>
+      `).join('');
+      list.querySelectorAll('.thread-item').forEach(el => {
+        el.onclick = () => openThread(threads.find(t => t.id === Number(el.dataset.id)));
+      });
+    }
+
+    function addAdminBubble(text, mine, at, failed) {
+      const box = document.getElementById('adminChatBox');
+      const div = document.createElement('div');
+      div.className = 'bubble ' + (mine ? 'me' : 'them') + (failed ? ' failed' : '');
+      div.textContent = text;
+      const time = document.createElement('div');
+      time.className = 'time';
+      time.textContent = fmtDate(at);
+      div.appendChild(time);
+      box.appendChild(div);
+      box.scrollTop = box.scrollHeight;
+    }
+
+    async function fetchThreadNew() {
+      if (!activeThread) return;
+      const { messages } = await api(`/api/admin/chat/${activeThread.id}/messages?after=${activeThread.lastId}`);
+      for (const m of messages) {
+        activeThread.lastId = Math.max(activeThread.lastId, m.id);
+        const text = await ChatCrypto.decrypt(activeThread.sharedKey, m.iv, m.ciphertext);
+        addAdminBubble(text ?? '🔒 [не расшифровать — ключ клиента сменился]',
+          m.sender === 'admin', m.created_at, text === null);
+      }
+    }
+
+    async function openThread(t) {
+      if (!t) return;
+      activeThread = { id: t.id, email: t.email, lastId: 0,
+        sharedKey: await ChatCrypto.deriveSharedKey(adminPriv, t.pubkey) };
+      document.getElementById('chatPane').style.display = 'block';
+      document.getElementById('chatPeerName').textContent = t.full_name || t.email;
+      document.getElementById('chatPeerInfo').textContent = t.email + (t.telegram ? ' · @' + t.telegram : '');
+      document.getElementById('adminChatBox').innerHTML = '';
+      await fetchThreadNew();
+      loadThreads();
+      if (chatPollTimer) clearInterval(chatPollTimer);
+      chatPollTimer = setInterval(() => { fetchThreadNew().catch(() => {}); }, 4000);
+    }
+
+    document.getElementById('adminSendBtn').onclick = adminSend;
+    document.getElementById('adminChatInput').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); adminSend(); }
+    });
+
+    async function adminSend() {
+      const input = document.getElementById('adminChatInput');
+      const text = input.value.trim();
+      if (!text || !activeThread) return;
+      const { iv, ciphertext } = await ChatCrypto.encrypt(activeThread.sharedKey, text);
+      try {
+        await api(`/api/admin/chat/${activeThread.id}/messages`, 'POST', { iv, ciphertext });
+        input.value = '';
+        await fetchThreadNew();
+      } catch (e) { alert(e.message); }
+    }
+
+    document.getElementById('exportChatKeyBtn').onclick = () => {
+      const backup = ChatCrypto.exportKeyBackup(ADMIN_KEY_STORAGE);
+      if (!backup) return alert('Ключ ещё не создан');
+      prompt('Скопируйте резервную копию ключа и сохраните в надёжном месте:', backup);
+    };
+    document.getElementById('importChatKeyBtn').onclick = () => {
+      const backup = prompt('Вставьте резервную копию ключа:');
+      if (!backup) return;
+      try {
+        ChatCrypto.importKeyBackup(ADMIN_KEY_STORAGE, backup.trim());
+        alert('Ключ импортирован. Страница перезагрузится.');
+        location.reload();
+      } catch (e) { alert('Ошибка: ' + e.message); }
+    };
+
+    // ---------- Курсы и направления ----------
+    async function loadDirections() {
+      const { directions, rates } = await api('/api/admin/directions');
+      document.getElementById('dirRatesInfo').textContent = rates.updatedAt
+        ? 'Базовые курсы из API обновлены: ' + new Date(rates.updatedAt).toLocaleString('ru-RU')
+        : 'Базовые курсы из API ещё не загружены.';
+
+      document.getElementById('dirsGrid').innerHTML = directions.map(d => {
+        const isManual = d.manual_rate != null && d.manual_rate > 0;
+        const finalRate = d.current_rate != null ? fmtRate(d.current_rate) : '—';
+        const baseRate = d.base_rate != null ? fmtRate(d.base_rate) : '—';
+        return `
+        <div class="dir-card ${d.enabled ? '' : 'off'}" data-id="${d.id}">
+          <div class="flex">
+            <input class="f-label grow" value="${esc(d.label)}" title="Название направления">
+            <label class="switch" title="Направление ${d.enabled ? 'включено' : 'выключено'}">
+              <input class="f-enabled" type="checkbox" ${d.enabled ? 'checked' : ''}>
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div class="flex mt" style="gap:6px">
+            <input class="f-from" value="${esc(d.from_cur)}" style="width:70px; text-transform:uppercase" title="Отдают">
+            <span class="muted">→</span>
+            <input class="f-to" value="${esc(d.to_cur)}" style="width:70px; text-transform:uppercase" title="Получают">
+            <span class="grow"></span>
+            <span class="cur-rate" title="Текущий курс для клиента">1 ${esc(d.from_cur)} = <b>${finalRate}</b> ${esc(d.to_cur)}</span>
+          </div>
+
+          <div class="mode-row mt">
+            <label class="mode ${!isManual ? 'active' : ''}">
+              <input type="radio" name="mode-${d.id}" class="f-mode-auto" ${!isManual ? 'checked' : ''}>
+              По API + наценка
+            </label>
+            <label class="mode ${isManual ? 'active' : ''}">
+              <input type="radio" name="mode-${d.id}" class="f-mode-manual" ${isManual ? 'checked' : ''}>
+              Вручную
+            </label>
+          </div>
+
+          <div class="auto-block" style="display:${isManual ? 'none' : 'block'}">
+            <div class="flex mt" style="gap:8px">
+              <label class="field grow" style="margin:0"><span>Наценка, %</span>
+                <input class="f-markup" type="number" step="any" value="${d.markup_pct}"></label>
+              <div class="field grow" style="margin:0">
+                <span style="display:block;font-size:13.5px;color:var(--muted);margin-bottom:5px">Базовый курс API</span>
+                <div class="base-rate">${baseRate}</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="manual-block" style="display:${isManual ? 'block' : 'none'}">
+            <label class="field mt" style="margin-bottom:0"><span>Курс вручную: 1 ${esc(d.from_cur)} = ? ${esc(d.to_cur)}</span>
+              <input class="f-manual" type="number" step="any" value="${isManual ? d.manual_rate : ''}" placeholder="Например 2.35"></label>
+          </div>
+
+          <div class="flex mt" style="gap:8px">
+            <label class="field grow" style="margin:0"><span>Мин. сумма</span>
+              <input class="f-min" type="number" step="any" value="${d.min_from}"></label>
+            <label class="field grow" style="margin:0"><span>Макс. сумма</span>
+              <input class="f-max" type="number" step="any" value="${d.max_from}"></label>
+          </div>
+          <label class="field mt"><span>Примечание для клиентов</span>
+            <input class="f-note" value="${esc(d.payment_note)}"></label>
+
+          <div class="flex">
+            <button class="btn primary small saveDir">💾 Сохранить</button>
+            <span class="grow"></span>
+            <button class="btn small danger delDir">Удалить</button>
+          </div>
+          <div class="msg card-msg"></div>
+        </div>`;
+      }).join('');
+
+      document.querySelectorAll('.dir-card').forEach(card => {
+        const id = card.dataset.id;
+        const autoRadio = card.querySelector('.f-mode-auto');
+        const manualRadio = card.querySelector('.f-mode-manual');
+        const syncMode = () => {
+          const manual = manualRadio.checked;
+          card.querySelector('.auto-block').style.display = manual ? 'none' : 'block';
+          card.querySelector('.manual-block').style.display = manual ? 'block' : 'none';
+          card.querySelectorAll('.mode').forEach(m => m.classList.remove('active'));
+          (manual ? manualRadio : autoRadio).closest('.mode').classList.add('active');
+        };
+        autoRadio.onchange = syncMode;
+        manualRadio.onchange = syncMode;
+
+        card.querySelector('.saveDir').onclick = async () => {
+          const msg = card.querySelector('.card-msg');
+          hideMsg(msg);
+          const manual = manualRadio.checked;
+          const manualVal = card.querySelector('.f-manual').value;
+          if (manual && (!manualVal || Number(manualVal) <= 0)) {
+            showMsg(msg, 'Укажите ручной курс больше нуля');
+            return;
+          }
+          try {
+            await api('/api/admin/directions/' + id, 'PATCH', {
+              from_cur: card.querySelector('.f-from').value,
+              to_cur: card.querySelector('.f-to').value,
+              label: card.querySelector('.f-label').value,
+              payment_note: card.querySelector('.f-note').value,
+              markup_pct: card.querySelector('.f-markup').value,
+              manual_rate: manual ? manualVal : '',
+              min_from: card.querySelector('.f-min').value,
+              max_from: card.querySelector('.f-max').value,
+              enabled: card.querySelector('.f-enabled').checked,
+            });
+            showMsg(msg, 'Сохранено', 'ok');
+            setTimeout(loadDirections, 600);
+          } catch (e) { showMsg(msg, e.message); }
+        };
+
+        card.querySelector('.delDir').onclick = async () => {
+          if (!confirm('Удалить направление НАСОВСЕМ?\n\nЕсли нужно просто убрать его с сайта — нажмите «Отмена» и выключите переключатель в углу карточки.')) return;
+          const r = await api('/api/admin/directions/' + id, 'DELETE').catch(e => alert(e.message));
+          if (r && r.note) alert(r.note);
+          loadDirections();
+        };
+      });
+    }
+
+    document.getElementById('addDirBtn').onclick = async () => {
+      const msg = document.getElementById('dirMsg');
+      hideMsg(msg);
+      try {
+        await api('/api/admin/directions', 'POST', {
+          from_cur: document.getElementById('newFrom').value,
+          to_cur: document.getElementById('newTo').value,
+          label: document.getElementById('newLabel').value,
+          markup_pct: document.getElementById('newMarkup').value,
+          enabled: true,
+        });
+        document.getElementById('newFrom').value = '';
+        document.getElementById('newTo').value = '';
+        document.getElementById('newLabel').value = '';
+        showMsg(msg, 'Направление добавлено', 'ok');
+        loadDirections();
+      } catch (e) { showMsg(msg, e.message); }
+    };
+
+    document.getElementById('restoreDefaultsBtn').onclick = async () => {
+      try {
+        const r = await api('/api/admin/directions/restore-defaults', 'POST', {});
+        alert(r.added ? `Добавлено направлений: ${r.added}` : 'Все стандартные направления уже на месте');
+        loadDirections();
+      } catch (e) { alert(e.message); }
+    };
+
+    document.getElementById('refreshRatesBtn2').onclick = async () => {
+      try {
+        await api('/api/admin/rates/refresh', 'POST', {});
+        loadDirections();
+      } catch (e) { alert(e.message); }
+    };
+
+    // ---------- Настройки ----------
+    async function loadSettings() {
+      const s = await api('/api/admin/settings');
+      document.getElementById('setName').value = s.site_name || '';
+      document.getElementById('setTelegram').value = s.telegram_username || '';
+      document.getElementById('smtpHost').value = s.smtp_host;
+      document.getElementById('smtpPort').value = s.smtp_port;
+      document.getElementById('smtpUser').value = s.smtp_user;
+      document.getElementById('smtpFrom').value = s.smtp_from;
+      document.getElementById('smtpPass').placeholder = s.smtp_pass_set ? '•••••• (сохранён)' : '';
+      document.getElementById('mailStatus').innerHTML = s.mail_configured
+        ? '✅ SMTP настроен — письма для сброса пароля отправляются.'
+        : '⚠️ SMTP не настроен: ссылки для сброса пароля видны только в консоли сервера. Заполните поля ниже, чтобы письма уходили клиентам.';
+      document.getElementById('tgChatId').value = s.tg_chat_id;
+      document.getElementById('tgToken').placeholder = s.tg_bot_token_set ? '•••••• (сохранён)' : '1234567890:AA...';
+      document.getElementById('tgStatus').innerHTML = s.tg_configured
+        ? '✅ Бот настроен — уведомления о заявках, верификациях и чате приходят в Telegram.'
+        : '⚠️ Бот не настроен: уведомления не отправляются.';
+    }
+
+    document.getElementById('tgDetectBtn').onclick = async () => {
+      const msg = document.getElementById('tgMsg');
+      hideMsg(msg);
+      try {
+        const r = await api('/api/admin/telegram/detect', 'POST', {
+          token: document.getElementById('tgToken').value,
+        });
+        document.getElementById('tgChatId').value = r.chatId;
+        document.getElementById('tgToken').value = '';
+        showMsg(msg, `Найден чат: ${r.name} (ID ${r.chatId}). Настройки сохранены.`, 'ok');
+        loadSettings();
+      } catch (e) { showMsg(msg, e.message); }
+    };
+
+    document.getElementById('tgSaveBtn').onclick = async () => {
+      const msg = document.getElementById('tgMsg');
+      hideMsg(msg);
+      try {
+        await api('/api/admin/settings', 'PATCH', {
+          tg_bot_token: document.getElementById('tgToken').value,
+          tg_chat_id: document.getElementById('tgChatId').value,
+        });
+        document.getElementById('tgToken').value = '';
+        showMsg(msg, 'Сохранено', 'ok');
+        loadSettings();
+      } catch (e) { showMsg(msg, e.message); }
+    };
+
+    document.getElementById('tgTestBtn').onclick = async () => {
+      const msg = document.getElementById('tgMsg');
+      hideMsg(msg);
+      try {
+        await api('/api/admin/telegram/test', 'POST', {});
+        showMsg(msg, 'Уведомление отправлено — проверьте Telegram', 'ok');
+      } catch (e) { showMsg(msg, e.message); }
+    };
+
+    document.getElementById('saveSmtpBtn').onclick = async () => {
+      const msg = document.getElementById('smtpMsg');
+      hideMsg(msg);
+      try {
+        await api('/api/admin/settings', 'PATCH', {
+          smtp_host: document.getElementById('smtpHost').value,
+          smtp_port: document.getElementById('smtpPort').value,
+          smtp_user: document.getElementById('smtpUser').value,
+          smtp_pass: document.getElementById('smtpPass').value,
+          smtp_from: document.getElementById('smtpFrom').value,
+        });
+        document.getElementById('smtpPass').value = '';
+        showMsg(msg, 'Настройки почты сохранены', 'ok');
+        loadSettings();
+      } catch (e) { showMsg(msg, e.message); }
+    };
+
+    document.getElementById('testMailBtn').onclick = async () => {
+      const msg = document.getElementById('smtpMsg');
+      hideMsg(msg);
+      try {
+        await api('/api/admin/test-mail', 'POST', {});
+        showMsg(msg, 'Тестовое письмо отправлено на ' + (document.getElementById('smtpUser').value ? 'вашу почту администратора' : 'почту'), 'ok');
+      } catch (e) { showMsg(msg, e.message); }
+    };
+
+    document.getElementById('saveSettingsBtn').onclick = async () => {
+      const msg = document.getElementById('setMsg');
+      hideMsg(msg);
+      try {
+        await api('/api/admin/settings', 'PATCH', {
+          site_name: document.getElementById('setName').value,
+          telegram_username: document.getElementById('setTelegram').value,
+        });
+        showMsg(msg, 'Сохранено', 'ok');
+      } catch (e) { showMsg(msg, e.message); }
+    };
+
+    document.getElementById('changePwBtn').onclick = async () => {
+      const msg = document.getElementById('pwMsg');
+      hideMsg(msg);
+      try {
+        await api('/api/admin/password', 'POST', {
+          current_password: document.getElementById('pwCurrent').value,
+          new_password: document.getElementById('pwNew').value,
+        });
+        document.getElementById('pwCurrent').value = '';
+        document.getElementById('pwNew').value = '';
+        showMsg(msg, 'Пароль изменён', 'ok');
+      } catch (e) { showMsg(msg, e.message); }
+    };
+
+    async function init() {
+      const me = await renderHeader('admin');
+      if (!me || !me.is_admin) { location.href = '/auth.html?next=' + encodeURIComponent('/admin.html'); return; }
+      await initChatKeys();
+      await Promise.all([loadOrders(), loadClients(), loadVerifications(), loadThreads(), loadDirections(), loadSettings()]);
+      setInterval(() => loadThreads().catch(() => {}), 10000);
+    }
+    init();
+  </script>
+</body>
+</html>

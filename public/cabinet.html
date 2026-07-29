@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Мои заявки — Обмен валют</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="site">
+    <div class="container inner">
+      <a class="logo" href="/"><span class="dot"></span><span id="siteName">Обмен валют</span></a>
+      <nav class="main" id="nav"></nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="section">
+      <h2>Верификация</h2>
+      <div class="card mt" id="verifyCard">
+        <div class="flex">
+          <span>Статус: <span class="badge" id="verifyBadge">…</span></span>
+          <span class="muted small" id="verifySubmitted"></span>
+        </div>
+        <p class="msg" id="verifyRejectReason" style="margin-top:10px"></p>
+
+        <div id="verifyForm" style="display:none">
+          <p class="muted small mt">Для подтверждения личности заполните данные и сделайте фото паспорта и лица
+            <b>с камеры</b> (загрузка готовых файлов не принимается). Данные увидит только администратор.</p>
+          <div class="grid2 mt">
+            <label class="field"><span>ФИО (как в паспорте) *</span>
+              <input type="text" id="verFullName" placeholder="Иванов Иван Иванович"></label>
+            <label class="field"><span>Телефон, к которому привязан банк (с него будет перевод) *</span>
+              <input type="tel" id="verPhone" placeholder="+7 900 000-00-00"></label>
+            <label class="field"><span>Ваш Telegram *</span>
+              <input type="text" id="verTelegram" placeholder="@username"></label>
+          </div>
+          <div class="grid2 mt">
+            <div>
+              <span class="muted small">1. Фото паспорта с камеры (разворот с фото)</span>
+              <div class="upload-box">
+                <video id="passportVideo" autoplay playsinline style="display:none"></video>
+                <img id="passportPreview" style="display:none">
+                <span id="passportHint">Нажмите «Включить камеру» и покажите паспорт</span>
+              </div>
+              <div class="flex" style="margin-top:8px">
+                <button class="btn small" id="passportCameraBtn">📷 Включить камеру</button>
+                <button class="btn small success" id="passportSnapBtn" style="display:none">Снять</button>
+              </div>
+            </div>
+            <div>
+              <span class="muted small">2. Фото лица с камеры</span>
+              <div class="upload-box">
+                <video id="selfieVideo" autoplay playsinline style="display:none"></video>
+                <img id="selfiePreview" style="display:none">
+                <span id="selfieHint">Нажмите «Включить камеру»</span>
+              </div>
+              <div class="flex" style="margin-top:8px">
+                <button class="btn small" id="selfieCameraBtn">📷 Включить камеру</button>
+                <button class="btn small success" id="selfieSnapBtn" style="display:none">Снять</button>
+              </div>
+            </div>
+          </div>
+          <div class="msg" id="verifyMsg"></div>
+          <button class="btn primary mt" id="submitVerifyBtn">Отправить на проверку</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="flex">
+        <h2>Мои заявки</h2>
+        <span class="grow"></span>
+        <a class="btn primary small" href="/#calc">+ Новая заявка</a>
+      </div>
+      <div class="card mt">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>№</th><th>Дата</th><th>Направление</th><th>Отдаёте</th><th>Получаете</th><th>Курс</th><th>Статус</th><th>Комментарий оператора</th></tr>
+            </thead>
+            <tbody id="ordersBody"></tbody>
+          </table>
+        </div>
+        <p class="muted mt" id="emptyNote" style="display:none">Заявок пока нет. <a href="/#calc">Создать первую</a></p>
+      </div>
+    </section>
+  </main>
+
+  <script src="/common.js"></script>
+  <script>
+    // ---------- Верификация ----------
+    const VERIFY_LABELS = { none: 'Не пройдена', pending: 'На проверке', approved: 'Подтверждена', rejected: 'Отклонена' };
+    const VERIFY_BADGE = { none: 'cancelled', pending: 'awaiting_payment', approved: 'done', rejected: 'cancelled' };
+    const captured = { passport: null, selfie: null };
+
+    async function loadVerification() {
+      const v = await api('/api/verification');
+      const badge = document.getElementById('verifyBadge');
+      badge.textContent = VERIFY_LABELS[v.status] || v.status;
+      badge.className = 'badge ' + VERIFY_BADGE[v.status];
+      document.getElementById('verifySubmitted').textContent =
+        v.submitted_at ? 'Отправлено: ' + fmtDate(v.submitted_at) : '';
+      const reason = document.getElementById('verifyRejectReason');
+      if (v.status === 'rejected' && v.comment) {
+        reason.className = 'msg error';
+        reason.textContent = 'Причина отклонения: ' + v.comment;
+      } else { reason.className = 'msg'; reason.textContent = ''; }
+      document.getElementById('verifyForm').style.display =
+        (v.status === 'none' || v.status === 'rejected') ? 'block' : 'none';
+      if (v.full_name) document.getElementById('verFullName').value = v.full_name;
+      if (v.phone) document.getElementById('verPhone').value = v.phone;
+      if (v.telegram) document.getElementById('verTelegram').value = '@' + v.telegram;
+    }
+
+    // Съёмка с камеры (kind: 'passport' | 'selfie'). Загрузка файлов не предусмотрена намеренно.
+    function setupCamera(kind, facing) {
+      const video = document.getElementById(kind + 'Video');
+      const preview = document.getElementById(kind + 'Preview');
+      const hint = document.getElementById(kind + 'Hint');
+      const cameraBtn = document.getElementById(kind + 'CameraBtn');
+      const snapBtn = document.getElementById(kind + 'SnapBtn');
+      let stream = null;
+
+      cameraBtn.onclick = async () => {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: facing, width: { ideal: 1600 } },
+          });
+          video.srcObject = stream;
+          video.style.display = 'block';
+          preview.style.display = 'none';
+          hint.style.display = 'none';
+          snapBtn.style.display = 'inline-flex';
+          cameraBtn.textContent = '📷 Перезапустить камеру';
+        } catch (e) {
+          alert('Камера недоступна: ' + e.message + '\nРазрешите доступ к камере в браузере — без неё пройти верификацию нельзя.');
+        }
+      };
+
+      snapBtn.onclick = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        canvas.getContext('2d').drawImage(video, 0, 0);
+        captured[kind] = canvas.toDataURL('image/jpeg', 0.85);
+        if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+        video.style.display = 'none';
+        snapBtn.style.display = 'none';
+        preview.src = captured[kind];
+        preview.style.display = 'block';
+        cameraBtn.textContent = '📷 Переснять';
+      };
+    }
+    setupCamera('passport', 'environment'); // на телефоне — задняя камера
+    setupCamera('selfie', 'user');          // фронтальная
+
+    document.getElementById('submitVerifyBtn').onclick = async () => {
+      const msg = document.getElementById('verifyMsg');
+      hideMsg(msg);
+      if (!document.getElementById('verFullName').value.trim()) return showMsg(msg, 'Укажите ФИО');
+      if (!document.getElementById('verPhone').value.trim()) return showMsg(msg, 'Укажите телефон, к которому привязан банк');
+      if (!document.getElementById('verTelegram').value.trim()) return showMsg(msg, 'Укажите ваш Telegram');
+      if (!captured.passport) return showMsg(msg, 'Сделайте фото паспорта с камеры');
+      if (!captured.selfie) return showMsg(msg, 'Сделайте фото лица с камеры');
+      try {
+        await api('/api/verification', 'POST', {
+          full_name: document.getElementById('verFullName').value,
+          phone: document.getElementById('verPhone').value,
+          telegram: document.getElementById('verTelegram').value,
+          passport: captured.passport,
+          selfie: captured.selfie,
+        });
+        showMsg(msg, 'Данные отправлены на проверку', 'ok');
+        captured.passport = captured.selfie = null;
+        loadVerification();
+      } catch (e) { showMsg(msg, e.message); }
+    };
+
+    // ---------- Заявки ----------
+    async function init() {
+      const me = await renderHeader('cabinet');
+      if (!me) { location.href = '/auth.html?next=' + encodeURIComponent('/cabinet.html'); return; }
+      loadVerification();
+      const { orders } = await api('/api/orders');
+      const body = document.getElementById('ordersBody');
+      document.getElementById('emptyNote').style.display = orders.length ? 'none' : 'block';
+      body.innerHTML = orders.map(o => `
+        <tr>
+          <td>${o.id}</td>
+          <td>${fmtDate(o.created_at)}</td>
+          <td>${esc(o.direction_label)}</td>
+          <td>${fmtAmount(o.amount_from)} ${esc(o.from_cur)}</td>
+          <td>${fmtAmount(o.amount_to)} ${esc(o.to_cur)}</td>
+          <td>${fmtRate(o.rate)}</td>
+          <td><span class="badge ${esc(o.status)}">${STATUS_LABELS[o.status] || esc(o.status)}</span></td>
+          <td class="muted">${esc(o.admin_comment || '')}</td>
+        </tr>
+      `).join('');
+    }
+    init();
+  </script>
+</body>
+</html>

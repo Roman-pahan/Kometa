@@ -1,0 +1,26 @@
+# Конфигурация для Render. При создании Blueprint сервис настроится сам.
+services:
+  - type: web
+    name: kometa-exchange
+    runtime: node
+    plan: starter          # $7/мес — на free нет постоянного диска, база будет стираться
+    region: frankfurt
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /api/site
+    # Постоянный диск: сюда пишутся база и зашифрованные фото верификации.
+    # Без него всё это исчезает при каждом перезапуске и деплое.
+    disk:
+      name: data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Значения задаются в панели Render, в репозиторий не попадают
+      - key: UPLOADS_KEY
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false

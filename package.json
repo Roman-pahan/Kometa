@@ -1,0 +1,17 @@
+{
+  "name": "kometa-exchange",
+  "version": "1.0.0",
+  "description": "Kometa — обменник: THB/RUB, THB/USDT, CNY (Alipay)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.11.1",
+    "express": "^5.2.1",
+    "nodemailer": "^9.0.3"
+  }
+}
