@@ -153,6 +153,23 @@
         </div>
 
         <div class="card mt">
+          <h2 style="font-size:18px">Агент расчёта сделок</h2>
+          <p class="muted small mt" id="agentStatus"></p>
+          <p class="muted small">Агент считает реальную себестоимость по стакану Bybit P2P и курсу Bitkub.
+            Когда он подключён, курсы на сайте строятся от рыночных данных, а к каждой заявке
+            приходит расчёт маржи и черновик ответа клиенту.</p>
+          <div class="grid2 mt">
+            <label class="field"><span>Адрес агента</span><input id="agentUrl" placeholder="https://kometa-agent.onrender.com"></label>
+            <label class="field"><span>Токен агента (пусто = не менять)</span><input id="agentToken" type="password" autocomplete="off"></label>
+          </div>
+          <div class="msg" id="agentMsg"></div>
+          <div class="flex">
+            <button class="btn primary" id="saveAgentBtn">Сохранить</button>
+            <button class="btn" id="testAgentBtn">🔌 Проверить связь</button>
+          </div>
+        </div>
+
+        <div class="card mt">
           <h2 style="font-size:18px">Смена пароля администратора</h2>
           <div class="grid2 mt">
             <label class="field"><span>Текущий пароль</span><input id="pwCurrent" type="password" autocomplete="current-password"></label>
@@ -566,7 +583,39 @@
       document.getElementById('tgStatus').innerHTML = s.tg_configured
         ? '✅ Бот настроен — уведомления о заявках, верификациях и чате приходят в Telegram.'
         : '⚠️ Бот не настроен: уведомления не отправляются.';
+      document.getElementById('agentUrl').value = s.agent_url || '';
+      document.getElementById('agentToken').placeholder = s.agent_token_set ? '•••••• (сохранён)' : '';
+      const market = s.rates && s.rates.market;
+      document.getElementById('agentStatus').innerHTML = s.agent_configured
+        ? (market && market.used
+            ? `✅ Агент подключён. Рыночные курсы: 1 USDT = ${market.usdt_thb ?? '—'} THB, ${market.rub_usdt ?? '—'} RUB.`
+            : '✅ Агент подключён, но рыночные курсы ещё не применены. Нажмите «Обновить базовые курсы» во вкладке курсов.')
+        : '⚠️ Агент не подключён: курсы берутся официальные, расчёт по заявкам не приходит.';
     }
+
+    document.getElementById('saveAgentBtn').onclick = async () => {
+      const msg = document.getElementById('agentMsg');
+      hideMsg(msg);
+      try {
+        await api('/api/admin/settings', 'PATCH', {
+          agent_url: document.getElementById('agentUrl').value,
+          agent_token: document.getElementById('agentToken').value,
+        });
+        document.getElementById('agentToken').value = '';
+        showMsg(msg, 'Сохранено', 'ok');
+        loadSettings();
+      } catch (e) { showMsg(msg, e.message); }
+    };
+
+    document.getElementById('testAgentBtn').onclick = async () => {
+      const msg = document.getElementById('agentMsg');
+      hideMsg(msg);
+      try {
+        const r = await api('/api/admin/agent/test', 'POST', {});
+        const warn = (r.warnings || []).length ? ' Предупреждения: ' + r.warnings.join('; ') : '';
+        showMsg(msg, `Связь есть. 1 USDT = ${r.usdt_thb ?? '—'} THB, ${r.rub_usdt ?? '—'} RUB.` + warn, 'ok');
+      } catch (e) { showMsg(msg, e.message); }
+    };
 
     document.getElementById('tgDetectBtn').onclick = async () => {
       const msg = document.getElementById('tgMsg');

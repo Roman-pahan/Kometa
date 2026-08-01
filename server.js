@@ -7,6 +7,7 @@ const { refreshRates, startAutoRefresh, directionRate, ratesInfo } = require('./
 const { sendMail, isConfigured: mailConfigured } = require('./mailer');
 const { encryptBuffer, decryptBuffer } = require('./secure-store');
 const { notifyAdmin, notifyAdminSafe, detectChatId, isConfigured: tgConfigured } = require('./notifier');
+const agent = require('./agent');
 
 const PORT = process.env.PORT || 3210;
 const app = express();
@@ -225,11 +226,63 @@ app.post('/api/orders', requireAuth, (req, res) => {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `).run(req.user.id, dir.id, amount, Number(amountTo.toFixed(2)), Number(rate.toFixed(6)),
     String(contact).trim(), String(requisites || '').trim(), String(comment || '').trim());
-  notifyAdminSafe(`🆕 <b>Заявка №${info.lastInsertRowid}</b>\n${dir.label}\n` +
-    `Отдаёт: ${amount} ${dir.from_cur} → Получает: ${amountTo.toFixed(2)} ${dir.to_cur}\n` +
-    `Клиент: ${req.user.email}\nКонтакт: ${String(contact).trim()}`);
+  notifyNewOrder({
+    id: info.lastInsertRowid, dir, amount, amountTo,
+    email: req.user.email, contact: String(contact).trim(),
+  });
   res.json({ ok: true, id: info.lastInsertRowid });
 });
+
+// Экранирование текста для Telegram с parse_mode HTML
+function escapeHtml(text) {
+  return String(text ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// Уведомление о новой заявке. Если агент подключён и умеет считать это направление,
+// добавляем его расчёт: себестоимость, маржу и черновик ответа клиенту.
+function notifyNewOrder(order) {
+  const { id, dir, amount, amountTo, email, contact } = order;
+  const head = `🆕 <b>Заявка №${id}</b>\n${escapeHtml(dir.label)}\n` +
+    `Отдаёт: ${amount} ${dir.from_cur} → Получает: ${amountTo.toFixed(2)} ${dir.to_cur}\n` +
+    `Клиент: ${escapeHtml(email)}\nКонтакт: ${escapeHtml(contact)}`;
+
+  const agentDirection = agent.directionForAgent(dir.from_cur, dir.to_cur);
+  if (!agent.isConfigured() || !agentDirection) {
+    notifyAdminSafe(head);
+    return;
+  }
+
+  (async () => {
+    try {
+      const payload = { direction: agentDirection, analyze_bybit: true };
+      // Суммы передаются в той валюте, в которой их понимают правила агента
+      if (dir.from_cur === 'RUB') payload.amount_rub = amount;
+      else if (dir.from_cur === 'THB') payload.amount_thb = amount;
+      else if (dir.from_cur === 'USDT') payload.amount_usdt = amount;
+      if (dir.from_cur === 'RUB' && dir.to_cur === 'THB') payload.client_has_tbank = true;
+
+      const deal = await agent.calcDeal(payload);
+      const lines = [head, '', '<b>Расчёт агента</b>'];
+      if (deal.scenario) lines.push(`Сценарий: ${escapeHtml(deal.scenario)}`);
+      if (deal.client_rate != null) lines.push(`Курс клиенту: ${Number(deal.client_rate).toFixed(4)}`);
+      if (deal.margin_percent != null) lines.push(`Маржа: ${Number(deal.margin_percent).toFixed(2)}%`);
+      if (deal.selected_bybit_ad) {
+        lines.push(`Стакан Bybit: ${escapeHtml(deal.selected_bybit_ad.advertiser || '—')} по ${escapeHtml(deal.selected_bybit_ad.price)}`);
+      }
+      for (const w of (deal.warnings || []).slice(0, 5)) lines.push(`⚠️ ${escapeHtml(w)}`);
+      if (deal.client_draft) {
+        lines.push('', '<b>Черновик ответа клиенту</b>', escapeHtml(deal.client_draft));
+      }
+      // Telegram не принимает сообщения длиннее 4096 символов
+      let text = lines.join('\n');
+      if (text.length > 3900) text = text.slice(0, 3900) + '\n…';
+      notifyAdminSafe(text);
+    } catch (e) {
+      // Агент недоступен — отправляем обычное уведомление, заявка не теряется
+      notifyAdminSafe(head + `\n\n⚠️ Агент не ответил: ${escapeHtml(e.message)}`);
+    }
+  })();
+}
 
 app.get('/api/orders', requireAuth, (req, res) => {
   const orders = db.prepare(`
@@ -547,6 +600,9 @@ app.get('/api/admin/settings', requireAdmin, (req, res) => {
     tg_bot_token_set: !!(getSetting('tg_bot_token') || ''),
     tg_chat_id: getSetting('tg_chat_id') || '',
     tg_configured: tgConfigured(),
+    agent_url: getSetting('agent_url') || '',
+    agent_token_set: !!(getSetting('agent_token') || ''),
+    agent_configured: agent.isConfigured(),
     rates: ratesInfo(),
   });
 });
@@ -562,7 +618,26 @@ app.patch('/api/admin/settings', requireAdmin, (req, res) => {
   if (b.smtp_from !== undefined) setSetting('smtp_from', String(b.smtp_from).trim());
   if (b.tg_bot_token) setSetting('tg_bot_token', String(b.tg_bot_token).trim());
   if (b.tg_chat_id !== undefined) setSetting('tg_chat_id', String(b.tg_chat_id).trim());
+  if (b.agent_url !== undefined) setSetting('agent_url', String(b.agent_url).trim());
+  if (b.agent_token) setSetting('agent_token', String(b.agent_token).trim());
   res.json({ ok: true });
+});
+
+app.post('/api/admin/agent/test', requireAdmin, async (req, res) => {
+  if (!agent.isConfigured()) return res.status(400).json({ error: 'Укажите адрес агента и токен' });
+  try {
+    const health = await agent.health();
+    const rates = await agent.fetchRates();
+    res.json({
+      ok: true,
+      health,
+      usdt_thb: rates.usdt_thb,
+      rub_usdt: rates.rub_usdt,
+      warnings: rates.warnings || [],
+    });
+  } catch (e) {
+    res.status(502).json({ error: 'Агент не отвечает: ' + e.message });
+  }
 });
 
 app.post('/api/admin/telegram/detect', requireAdmin, async (req, res) => {
