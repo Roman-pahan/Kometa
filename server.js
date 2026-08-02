@@ -37,7 +37,7 @@ function getSessionUser(req) {
   const match = cookie.match(/(?:^|;\s*)sid=([a-f0-9]{64})/);
   if (!match) return null;
   return db.prepare(`
-    SELECT u.id, u.email, u.name, u.is_admin FROM sessions s
+    SELECT u.id, u.email, u.name, u.is_admin, u.verify_status FROM sessions s
     JOIN users u ON u.id = s.user_id WHERE s.token = ?
   `).get(match[1]) || null;
 }
@@ -199,6 +199,14 @@ app.get('/api/public', (req, res) => {
   });
   res.json({
     directions,
+    // Способы отправки рублей и их условия, чтобы сайт писал то же, что оператор
+    payment_channels: Object.entries(PAYMENT_CHANNELS).map(([key, value]) => ({
+      key,
+      label: value.label,
+      requires_verification: value.requires_verification,
+      min_rub: value.min_rub,
+      note: value.note || '',
+    })),
     rates: ratesInfo(),
     site_name: getSetting('site_name'),
     telegram: getSetting('telegram_username'),
@@ -209,10 +217,39 @@ app.get('/api/public', (req, res) => {
 
 const STATUSES = ['new', 'processing', 'awaiting_payment', 'done', 'cancelled'];
 
+// Способы, которыми клиент присылает рубли. Оплата по QR идёт через подрядчика,
+// который принимает деньги только от проверенного отправителя, поэтому без
+// верификации такая заявка не создаётся.
+const PAYMENT_CHANNELS = {
+  qr: { label: 'QR', requires_verification: true, min_rub: 0, note: 'Нужна верификация: паспорт и фото лица' },
+  tbank: { label: 'Отправка с Вашего Т-Банк по СБП', requires_verification: false, min_rub: 30000, note: 'Квитанция на почту от имени банка, реквизиты 5–20 минут' },
+  bank: { label: 'Отправка с любого Вашего банка по СБП', requires_verification: false, min_rub: 20000, note: 'Проверка получения может занять некоторое время' },
+};
+
 app.post('/api/orders', requireAuth, (req, res) => {
-  const { direction_id, amount_from, contact, requisites, comment } = req.body || {};
+  const { direction_id, amount_from, contact, requisites, comment, payment_channel } = req.body || {};
   const dir = db.prepare('SELECT * FROM directions WHERE id = ? AND enabled = 1').get(Number(direction_id));
   if (!dir) return res.status(400).json({ error: 'Направление не найдено' });
+
+  // Способ отправки спрашивается только там, где клиент платит рублями
+  let channel = '';
+  if (dir.from_cur === 'RUB') {
+    channel = String(payment_channel || '').trim();
+    const rules = PAYMENT_CHANNELS[channel];
+    if (!rules) return res.status(400).json({ error: 'Выберите способ отправки рублей' });
+    if (rules.requires_verification) {
+      const u = db.prepare('SELECT verify_status FROM users WHERE id = ?').get(req.user.id);
+      if (u.verify_status !== 'approved') {
+        return res.status(403).json({
+          error: 'Для обмена через QR верификация обязательна. Пройдите её в личном кабинете или выберите другой способ отправки рублей.',
+          need_verification: true,
+        });
+      }
+    }
+    if (rules.min_rub && Number(amount_from) < rules.min_rub) {
+      return res.status(400).json({ error: `${rules.label}: минимальная сумма ${rules.min_rub} RUB` });
+    }
+  }
   const amount = Number(amount_from);
   if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'Некорректная сумма' });
   if (dir.min_from && amount < dir.min_from) return res.status(400).json({ error: `Минимальная сумма: ${dir.min_from} ${dir.from_cur}` });
@@ -222,13 +259,14 @@ app.post('/api/orders', requireAuth, (req, res) => {
   if (rate == null) return res.status(503).json({ error: 'Курс временно недоступен, попробуйте позже' });
   const amountTo = amount * rate;
   const info = db.prepare(`
-    INSERT INTO orders (user_id, direction_id, amount_from, amount_to, rate, contact, requisites, comment)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO orders (user_id, direction_id, amount_from, amount_to, rate, contact, requisites, comment, payment_channel)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(req.user.id, dir.id, amount, Number(amountTo.toFixed(2)), Number(rate.toFixed(6)),
-    String(contact).trim(), String(requisites || '').trim(), String(comment || '').trim());
+    String(contact).trim(), String(requisites || '').trim(), String(comment || '').trim(), channel);
   notifyNewOrder({
     id: info.lastInsertRowid, dir, amount, amountTo,
     email: req.user.email, contact: String(contact).trim(),
+    channel: PAYMENT_CHANNELS[channel]?.label || '',
   });
   res.json({ ok: true, id: info.lastInsertRowid });
 });
@@ -241,9 +279,10 @@ function escapeHtml(text) {
 // Уведомление о новой заявке. Если агент подключён и умеет считать это направление,
 // добавляем его расчёт: себестоимость, маржу и черновик ответа клиенту.
 function notifyNewOrder(order) {
-  const { id, dir, amount, amountTo, email, contact } = order;
+  const { id, dir, amount, amountTo, email, contact, channel } = order;
   const head = `🆕 <b>Заявка №${id}</b>\n${escapeHtml(dir.label)}\n` +
     `Отдаёт: ${amount} ${dir.from_cur} → Получает: ${amountTo.toFixed(2)} ${dir.to_cur}\n` +
+    (channel ? `Отправка: ${escapeHtml(channel)}\n` : '') +
     `Клиент: ${escapeHtml(email)}\nКонтакт: ${escapeHtml(contact)}`;
 
   const agentDirection = agent.directionForAgent(dir.from_cur, dir.to_cur);

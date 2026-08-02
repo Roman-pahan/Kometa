@@ -85,6 +85,8 @@ for (const sql of [
   "ALTER TABLE users ADD COLUMN phone TEXT DEFAULT ''",
   "ALTER TABLE users ADD COLUMN telegram TEXT DEFAULT ''",
   'ALTER TABLE users ADD COLUMN pubkey TEXT',
+  // Способ, которым клиент отправляет рубли: qr, tbank или bank
+  "ALTER TABLE orders ADD COLUMN payment_channel TEXT DEFAULT ''",
 ]) {
   try { db.exec(sql); } catch (_) { /* колонка уже существует */ }
 }
@@ -101,11 +103,10 @@ function setSetting(key, value) {
 // Первичное наполнение направлений обмена
 const DEFAULT_DIRECTIONS = [
   { from_cur: 'THB', to_cur: 'RUB', label: 'Баты → Рубли', payment_note: 'Приём батов, выплата на карту РФ', markup_pct: 2, min_from: 1000, max_from: 500000, sort: 10 },
-  { from_cur: 'RUB', to_cur: 'THB', label: 'Рубли → Баты', payment_note: 'Оплата с карты РФ, выдача батов', markup_pct: 2, min_from: 3000, max_from: 1500000, sort: 20 },
-  { from_cur: 'THB', to_cur: 'USDT', label: 'Баты → USDT', payment_note: 'Выплата USDT (TRC-20)', markup_pct: 2, min_from: 1000, max_from: 500000, sort: 30 },
-  { from_cur: 'USDT', to_cur: 'THB', label: 'USDT → Баты', payment_note: 'Приём USDT (TRC-20), выдача батов', markup_pct: 2, min_from: 30, max_from: 15000, sort: 40 },
+  { from_cur: 'RUB', to_cur: 'THB', label: 'Рубли → Баты', payment_note: 'Оплата по СБП или QR, выдача батов', markup_pct: 2, min_from: 3000, max_from: 1500000, sort: 20 },
+  { from_cur: 'THB', to_cur: 'USDT', label: 'Баты → USDT', payment_note: 'Выплата USDT, сеть обсуждаем в чате', markup_pct: 2, min_from: 1000, max_from: 500000, sort: 30 },
+  { from_cur: 'USDT', to_cur: 'THB', label: 'USDT → Баты', payment_note: 'Приём USDT, выдача батов', markup_pct: 2, min_from: 30, max_from: 15000, sort: 40 },
   { from_cur: 'RUB', to_cur: 'CNY', label: 'Рубли → Юани (Alipay)', payment_note: 'Пополнение Alipay юанями', markup_pct: 2.5, min_from: 3000, max_from: 1000000, sort: 50 },
-  { from_cur: 'CNY', to_cur: 'RUB', label: 'Юани (Alipay) → Рубли', payment_note: 'Приём юаней с Alipay, выплата на карту РФ', markup_pct: 2.5, min_from: 300, max_from: 100000, sort: 60 },
   { from_cur: 'USDT', to_cur: 'CNY', label: 'USDT → Юани (Alipay)', payment_note: 'Пополнение Alipay за USDT', markup_pct: 2.5, min_from: 30, max_from: 15000, sort: 70 },
 ];
 
@@ -125,6 +126,23 @@ function restoreDefaultDirections() {
 
 const dirCount = db.prepare('SELECT COUNT(*) AS c FROM directions').get().c;
 if (dirCount === 0) restoreDefaultDirections();
+
+// Миграция: сеть перевода USDT обсуждается с клиентом лично, на сайте её нет
+const trcRows = db.prepare("SELECT id, label, payment_note FROM directions WHERE payment_note LIKE '%TRC%' OR label LIKE '%TRC%'").all();
+for (const row of trcRows) {
+  const clean = text => String(text || '').replace(/\s*\(TRC-?20\)/gi, '').replace(/\s*TRC-?20\s*/gi, ' ').replace(/\s{2,}/g, ' ').trim();
+  db.prepare('UPDATE directions SET label = ?, payment_note = ? WHERE id = ?').run(clean(row.label), clean(row.payment_note), row.id);
+}
+if (trcRows.length) console.log(`[db] упоминание сети USDT убрано из ${trcRows.length} направлений`);
+
+// Миграция: рубли принимаются по СБП и по QR, оплата картой больше не описывается
+const cardNote = db.prepare("UPDATE directions SET payment_note = 'Оплата по СБП или QR, выдача батов' WHERE from_cur = 'RUB' AND to_cur = 'THB' AND payment_note = 'Оплата с карты РФ, выдача батов'").run();
+if (cardNote.changes) console.log('[db] описание оплаты рублями обновлено на СБП и QR');
+
+// Миграция: юани мы только выдаём, приём юаней с Alipay больше не предлагается
+const cnyIn = db.prepare("SELECT id FROM directions WHERE from_cur = 'CNY' AND enabled = 1").all();
+for (const row of cnyIn) db.prepare('UPDATE directions SET enabled = 0 WHERE id = ?').run(row.id);
+if (cnyIn.length) console.log(`[db] приём юаней отключён (${cnyIn.length} направление), включить можно в админке`);
 
 if (getSetting('site_name') === null) setSetting('site_name', 'Обмен валют');
 if (getSetting('telegram_username') === null) setSetting('telegram_username', 'your_telegram');
