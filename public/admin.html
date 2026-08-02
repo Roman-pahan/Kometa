@@ -187,14 +187,24 @@
   <script>
     const STATUS_OPTIONS = Object.entries(STATUS_LABELS);
 
+    const TABS = ['orders', 'clients', 'verify', 'chat', 'directions', 'settings'];
+
+    // Показать одну вкладку и запомнить её в адресе, чтобы на неё можно было дать ссылку
+    function openTab(name) {
+      if (!TABS.includes(name)) return;
+      document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+      TABS.forEach(t => document.getElementById('tab-' + t).style.display = t === name ? 'block' : 'none');
+      if (location.hash !== '#' + name) history.replaceState(null, '', '#' + name);
+    }
+
     // Переключение вкладок
     document.querySelectorAll('.tabs button').forEach(btn => {
-      btn.onclick = () => {
-        document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b === btn));
-        ['orders', 'clients', 'verify', 'chat', 'directions', 'settings'].forEach(t =>
-          document.getElementById('tab-' + t).style.display = t === btn.dataset.tab ? 'block' : 'none');
-      };
+      btn.onclick = () => openTab(btn.dataset.tab);
     });
+
+    // Ссылка вида /admin.html#verify открывает нужную вкладку сразу
+    if (TABS.includes(location.hash.slice(1))) openTab(location.hash.slice(1));
+    window.addEventListener('hashchange', () => openTab(location.hash.slice(1)));
 
     // ---------- Заявки ----------
     async function loadOrders() {
@@ -708,7 +718,8 @@
 
     async function init() {
       const me = await renderHeader('admin');
-      if (!me || !me.is_admin) { location.href = '/auth.html?next=' + encodeURIComponent('/admin.html'); return; }
+      // Вкладка запоминается в адресе, поэтому её нужно донести через вход
+      if (!me || !me.is_admin) { location.href = '/auth.html?next=' + encodeURIComponent('/admin.html' + location.hash); return; }
       await initChatKeys();
       await Promise.all([loadOrders(), loadClients(), loadVerifications(), loadThreads(), loadDirections(), loadSettings()]);
       setInterval(() => loadThreads().catch(() => {}), 10000);

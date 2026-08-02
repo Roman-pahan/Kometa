@@ -92,7 +92,8 @@
           email: document.getElementById('loginEmail').value,
           password: document.getElementById('loginPassword').value,
         });
-        location.href = r.is_admin ? '/admin.html' : next;
+        // Админа ведём в админку, но не теряем вкладку, если ссылка вела на неё
+        location.href = r.is_admin ? (next.startsWith('/admin.html') ? next : '/admin.html') : next;
       } catch (err) { showMsg(msg, err.message); }
     };
 

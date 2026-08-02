@@ -359,7 +359,11 @@ app.post('/api/verification', requireAuth, (req, res) => {
     verify_comment = '', verify_submitted_at = datetime('now'),
     full_name = ?, phone = ?, telegram = ? WHERE id = ?`)
     .run(passport.name, selfie.name, fullName, phone, telegram, req.user.id);
-  notifyAdminSafe(`🪪 <b>Новая верификация</b>\n${fullName}\n${req.user.email}\nТелефон: ${phone}\nTelegram: @${telegram}`);
+  // Ссылка открывает админку сразу на вкладке верификации, где ждёт заявка
+  const verifyLink = `${req.protocol}://${req.get('host')}/admin.html#verify`;
+  notifyAdminSafe(`🪪 <b>Новая верификация</b>\n${escapeHtml(fullName)}\n${escapeHtml(req.user.email)}\n` +
+    `Телефон: ${escapeHtml(phone)}\nTelegram: @${escapeHtml(telegram)}\n\n` +
+    `<a href="${verifyLink}">Проверить в админке</a>`);
   res.json({ ok: true });
 });
 
