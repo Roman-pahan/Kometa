@@ -12,6 +12,7 @@ const REFRESH_MS = 15 * 60 * 1000; // раз в 15 минут
 let baseRates = null;   // { THB: 36.2, RUB: 79.5, CNY: 7.1, USD: 1, USDT: 1, ... }
 let updatedAt = null;
 let marketInfo = { used: false, usdt_thb: null, rub_usdt: null, at: null, error: null };
+let marketMargins = null;   // { qr, tbank, global } — проценты, заданные в боте
 
 // Восстановление после перезапуска
 try {
@@ -35,15 +36,19 @@ async function applyMarketRates(rates) {
     const m = await agent.fetchRates();
     if (m.usdt_thb) rates.THB = m.usdt_thb;
     if (m.rub_usdt) rates.RUB = m.rub_usdt;
+    // Маржу задаёт оператор в боте — сайт берёт её оттуда, чтобы цифра была одна
+    marketMargins = m.margins || null;
     marketInfo = {
       used: !!(m.usdt_thb || m.rub_usdt),
       usdt_thb: m.usdt_thb ?? null,
       rub_usdt: m.rub_usdt ?? null,
+      margins: marketMargins,
       at: new Date().toISOString(),
       error: (m.warnings && m.warnings.length) ? m.warnings.join('; ') : null,
     };
   } catch (e) {
-    // Агент недоступен — остаёмся на официальных курсах, сайт продолжает работать
+    // Агент недоступен — остаёмся на официальных курсах и наценках из админки
+    marketMargins = null;
     marketInfo = { used: false, usdt_thb: null, rub_usdt: null, at: null, error: e.message };
     console.error('[rates] агент недоступен, используем официальные курсы:', e.message);
   }
@@ -77,6 +82,15 @@ function crossRate(fromCur, toCur) {
   return to / from;
 }
 
+// Наценка направления: маржа из бота, если агент её прислал, иначе своя из админки.
+// Маржа оператора едина для всех рублёвых направлений, поэтому берётся общая цифра.
+function markupFor(dir) {
+  if (!marketMargins) return { pct: dir.markup_pct, source: 'site' };
+  const pct = marketMargins.tbank ?? marketMargins.qr ?? marketMargins.global;
+  if (pct == null) return { pct: dir.markup_pct, source: 'site' };
+  return { pct, source: 'agent' };
+}
+
 // Итоговый курс направления с учётом наценки или ручного курса
 function directionRate(dir) {
   if (dir.manual_rate != null && dir.manual_rate > 0) {
@@ -84,8 +98,9 @@ function directionRate(dir) {
   }
   const base = crossRate(dir.from_cur, dir.to_cur);
   if (base == null) return { rate: null, source: 'none', base: null };
-  const rate = base * (1 - dir.markup_pct / 100);
-  return { rate, source: 'auto', base };
+  const markup = markupFor(dir);
+  const rate = base * (1 - markup.pct / 100);
+  return { rate, source: 'auto', base, markup_pct: markup.pct, markup_source: markup.source };
 }
 
 function ratesInfo() {
