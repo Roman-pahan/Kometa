@@ -172,8 +172,7 @@
         return;
       }
       out.textContent = fmtAmount(amount * dir.rate);
-      rateLine.textContent = `Курс: 1 ${dir.from_cur} = ${fmtRate(dir.rate)} ${dir.to_cur}` +
-        (dir.rate < 0.05 ? ` (1 ${dir.to_cur} ≈ ${fmtRate(1 / dir.rate)} ${dir.from_cur})` : '');
+      rateLine.textContent = 'Курс: ' + rateText(dir);
     }
 
     function renderRates() {
@@ -181,7 +180,7 @@
       grid.innerHTML = PUB.directions.map(d => `
         <div class="rate-card" data-id="${d.id}">
           <div class="pair">${esc(d.label)}</div>
-          <div class="value">${d.rate != null ? '1 ' + esc(d.from_cur) + ' = ' + fmtRate(d.rate) + ' ' + esc(d.to_cur) : 'уточняйте'}</div>
+          <div class="value">${esc(rateText(d))}</div>
           <div class="note">${esc(d.payment_note)}</div>
         </div>
       `).join('');

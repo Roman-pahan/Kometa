@@ -30,6 +30,14 @@ function fmtRate(r) {
   return Number(r).toLocaleString('ru-RU', { maximumFractionDigits: 6 });
 }
 
+// Курс всегда пишется той стороной, где число больше единицы: «1 THB = 2,43 RUB»
+// читается, а «1 RUB = 0,412111 THB» — нет.
+function rateText(dir) {
+  if (dir.rate == null) return 'уточняйте';
+  if (dir.rate >= 1) return `1 ${dir.from_cur} = ${fmtRate(dir.rate)} ${dir.to_cur}`;
+  return `1 ${dir.to_cur} = ${fmtRate(1 / dir.rate)} ${dir.from_cur}`;
+}
+
 function fmtDate(s) {
   // SQLite отдаёт UTC "YYYY-MM-DD HH:MM:SS"
   const d = new Date(s.replace(' ', 'T') + 'Z');
