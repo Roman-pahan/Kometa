@@ -3,7 +3,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const express = require('express');
 const { db, getSetting, setSetting, restoreDefaultDirections } = require('./db');
-const { refreshRates, startAutoRefresh, directionRate, ratesInfo } = require('./rates');
+const { refreshRates, startAutoRefresh, directionRate, ratesInfo, applyPushedBoard } = require('./rates');
 const { sendMail, isConfigured: mailConfigured } = require('./mailer');
 const { encryptBuffer, decryptBuffer } = require('./secure-store');
 const { notifyAdmin, notifyAdminSafe, detectChatId, isConfigured: tgConfigured } = require('./notifier');
@@ -663,6 +663,25 @@ app.patch('/api/admin/settings', requireAdmin, (req, res) => {
   if (b.tg_chat_id !== undefined) setSetting('tg_chat_id', String(b.tg_chat_id).trim());
   if (b.agent_url !== undefined) setSetting('agent_url', String(b.agent_url).trim());
   if (b.agent_token) setSetting('agent_token', String(b.agent_token).trim());
+  res.json({ ok: true });
+});
+
+// Курсы, присланные ботом. Оператор проверяет курс в Telegram, бот отправляет
+// сюда весь набор, и сайт считает по нему до следующей проверки. Так связка
+// работает, даже когда бот запущен не на сервере, а у оператора.
+app.post('/api/agent/rates', (req, res) => {
+  const expected = (getSetting('agent_token') || '').trim();
+  if (!expected) return res.status(503).json({ error: 'Токен агента не задан в админке' });
+  const supplied = String(req.headers['x-agent-token'] || '').trim();
+  // Сравнение постоянного времени: длины приводим, чтобы timingSafeEqual не бросал
+  const ok = supplied.length === expected.length &&
+    crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));
+  if (!ok) return res.status(401).json({ error: 'Неверный токен' });
+
+  const board = req.body || {};
+  if (!board.usdt_thb && !board.rub_usdt) return res.status(400).json({ error: 'Пустой набор курсов' });
+  setSetting('agent_board', JSON.stringify({ ...board, received_at: new Date().toISOString() }));
+  applyPushedBoard();
   res.json({ ok: true });
 });
 

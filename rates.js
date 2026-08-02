@@ -5,6 +5,7 @@
 // USDT считается равным USD (1:1).
 
 const { getSetting, setSetting } = require('./db');
+
 const agent = require('./agent');
 
 const REFRESH_MS = 15 * 60 * 1000; // раз в 15 минут
@@ -24,10 +25,56 @@ try {
   }
 } catch (_) { /* игнорируем битые данные */ }
 
+// Последний набор курсов, присланный ботом оператора
+function pushedBoard() {
+  try {
+    const saved = getSetting('agent_board');
+    return saved ? JSON.parse(saved) : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+// Курсы, присланные ботом, живут до следующей проверки оператора и не зависят
+// от того, доступен ли агент снаружи.
+function applyPushedBoard() {
+  const board = pushedBoard();
+  if (!board || !baseRates) return false;
+  if (board.usdt_thb) baseRates.THB = board.usdt_thb;
+  if (board.rub_usdt) baseRates.RUB = board.rub_usdt;
+  if (board.cny_per_usdt) baseRates.CNY = board.cny_per_usdt;
+  marketMargins = board.margins || null;
+  marketInfo = {
+    used: true,
+    source: 'bot',
+    usdt_thb: board.usdt_thb ?? null,
+    rub_usdt: board.rub_usdt ?? null,
+    margins: marketMargins,
+    at: board.received_at || null,
+    error: null,
+  };
+  setSetting('base_rates', JSON.stringify({ rates: baseRates, updatedAt: new Date().toISOString() }));
+  return true;
+}
+
 // Подмена официальных курсов THB и RUB рыночными данными агента.
 // Курсы у агента выражены в единицах за 1 USDT, а базовая таблица — за 1 USD,
 // и поскольку USDT считается равным USD, значения подставляются напрямую.
 async function applyMarketRates(rates) {
+  // Присланный ботом набор важнее опроса: оператор подтвердил его вручную
+  const board = pushedBoard();
+  if (board && (board.usdt_thb || board.rub_usdt)) {
+    if (board.usdt_thb) rates.THB = board.usdt_thb;
+    if (board.rub_usdt) rates.RUB = board.rub_usdt;
+    if (board.cny_per_usdt) rates.CNY = board.cny_per_usdt;
+    marketMargins = board.margins || null;
+    marketInfo = {
+      used: true, source: 'bot',
+      usdt_thb: board.usdt_thb ?? null, rub_usdt: board.rub_usdt ?? null,
+      margins: marketMargins, at: board.received_at || null, error: null,
+    };
+    return rates;
+  }
   if (!agent.isConfigured()) {
     marketInfo = { used: false, usdt_thb: null, rub_usdt: null, at: null, error: null };
     return rates;
@@ -39,6 +86,7 @@ async function applyMarketRates(rates) {
     // Маржу задаёт оператор в боте — сайт берёт её оттуда, чтобы цифра была одна
     marketMargins = m.margins || null;
     marketInfo = {
+      source: 'agent',
       used: !!(m.usdt_thb || m.rub_usdt),
       usdt_thb: m.usdt_thb ?? null,
       rub_usdt: m.rub_usdt ?? null,
@@ -107,4 +155,4 @@ function ratesInfo() {
   return { updatedAt, hasRates: !!baseRates, market: marketInfo };
 }
 
-module.exports = { refreshRates, startAutoRefresh, directionRate, crossRate, ratesInfo };
+module.exports = { refreshRates, startAutoRefresh, directionRate, crossRate, ratesInfo, applyPushedBoard };
