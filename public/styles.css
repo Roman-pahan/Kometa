@@ -174,15 +174,45 @@ textarea { resize: vertical; min-height: 70px; }
 .msg { padding: 10px 14px; border-radius: 10px; font-size: 14px; margin: 10px 0; display: none; }
 .msg.error { display: block; background: rgba(255, 93, 108, .12); color: var(--danger); border: 1px solid rgba(255, 93, 108, .35); }
 .msg.ok { display: block; background: rgba(34, 201, 147, .12); color: var(--success); border: 1px solid rgba(34, 201, 147, .35); }
+.msg.warn { display: block; background: rgba(240, 180, 41, .10); color: var(--text); border: 1px solid rgba(240, 180, 41, .35); }
 
-/* Калькулятор */
-.calc { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: start; }
+/* Калькулятор: слева что отдаём, справа что получаем, кнопка под ними */
+.calc { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; align-items: stretch; }
 @media (max-width: 800px) { .calc { grid-template-columns: 1fr; } }
+.calc-side > .field:last-of-type { margin-bottom: 8px; }
+.calc-side .muted.small { margin-top: 6px; }
+
+/* Итог выделен панелью, чтобы взгляд сразу падал на сумму */
+.calc-out {
+  display: flex; flex-direction: column; justify-content: center;
+  padding: 18px 20px; border-radius: 12px;
+  background: linear-gradient(160deg, rgba(46, 123, 255, .10), rgba(123, 92, 255, .06));
+  border: 1px solid var(--border);
+}
 .calc .result {
-  font-size: 28px; font-weight: 800; color: var(--accent-soft);
-  padding: 14px 0 4px;
+  font-size: 32px; font-weight: 800; color: var(--accent-soft);
+  padding: 6px 0 6px; line-height: 1.15; word-break: break-word;
 }
 .calc .rate-line { color: var(--muted); font-size: 14px; }
+
+/* Направление выбирается значками валют, поэтому шрифт крупнее обычного */
+select.pair-select { font-size: 17px; letter-spacing: .06em; }
+
+/* Сумма и её валюта в одном поле */
+.amount-input { position: relative; display: block; }
+.amount-input input { padding-right: 46px; font-size: 17px; }
+.amount-input b {
+  position: absolute; right: 14px; top: 50%; transform: translateY(-50%);
+  color: var(--muted); font-size: 16px; pointer-events: none;
+}
+
+/* Кнопка и предупреждения — во всю ширину карточки */
+.calc-actions { margin-top: 16px; display: flex; gap: 12px; flex-wrap: wrap; }
+.calc-actions .btn { min-width: 200px; }
+@media (max-width: 560px) { .calc-actions .btn { width: 100%; } }
+
+/* Предупреждение о верификации: текст сверху, действия отдельной строкой */
+.msg .notice-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
 
 /* Таблицы */
 .table-wrap { overflow-x: auto; }

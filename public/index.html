@@ -36,31 +36,37 @@
       <h2>Калькулятор обмена</h2>
       <div class="card">
         <div class="calc">
-          <div>
+          <div class="calc-side">
             <label class="field">
               <span>Направление обмена</span>
-              <select id="dirSelect"></select>
+              <select id="dirSelect" class="pair-select"></select>
             </label>
             <label class="field">
-              <span>Вы отдаёте (<b id="fromCurLabel"></b>)</span>
-              <input type="number" id="amountFrom" min="0" step="any" placeholder="Введите сумму">
+              <span>Вы отдаёте</span>
+              <span class="amount-input">
+                <input type="number" id="amountFrom" min="0" step="any" placeholder="0">
+                <b id="fromCurLabel"></b>
+              </span>
             </label>
+            <p class="muted small" id="limitsLine"></p>
             <label class="field" id="channelField" style="display:none">
               <span>Как отправите рубли</span>
               <select id="channelSelect"></select>
             </label>
             <p class="muted small" id="channelNote"></p>
-            <p class="muted small" id="limitsLine"></p>
           </div>
-          <div>
+
+          <div class="calc-side calc-out">
             <span class="muted small">Вы получаете</span>
             <div class="result"><span id="amountTo">0</span> <span id="toCurLabel"></span></div>
             <div class="rate-line" id="rateLine"></div>
-            <div class="msg" id="verifyNotice" style="display:none"></div>
-            <div class="mt">
-              <button class="btn success" id="createOrderBtn">Оставить заявку</button>
-            </div>
           </div>
+        </div>
+
+        <!-- Предупреждения и кнопка идут во всю ширину, под обеими колонками -->
+        <div class="msg" id="verifyNotice" style="display:none"></div>
+        <div class="calc-actions">
+          <button class="btn success" id="createOrderBtn">Оставить заявку</button>
         </div>
 
         <!-- Форма заявки (раскрывается) -->
@@ -269,11 +275,14 @@
       note.textContent = channel ? (channel.note || '') +
         (channel.min_rub ? (channel.note ? ' · ' : '') + 'от ' + fmtAmount(channel.min_rub) + ' RUB' : '') : '';
       const blocked = !!channel && channel.requires_verification && !isVerified();
+      notice.className = 'msg warn';
       notice.style.display = blocked ? 'block' : 'none';
       if (blocked) {
-        notice.innerHTML = `Для обмена через QR верификация обязательна: паспорт и фото лица.
-          <a href="/cabinet.html">Пройти верификацию</a>
-          <button class="btn small" type="button" id="withoutVerifyBtn">Обменять без верификации</button>`;
+        notice.innerHTML = `Для этого способа нужна верификация: паспорт и фото лица.
+          <span class="notice-actions">
+            <a class="btn small primary" href="/cabinet.html">Пройти верификацию</a>
+            <button class="btn small" type="button" id="withoutVerifyBtn">Выбрать другой способ</button>
+          </span>`;
         document.getElementById('withoutVerifyBtn').onclick = () => {
           // QR убирается из списка совсем: клиент выбрал обмен без верификации
           qrHidden = true;
