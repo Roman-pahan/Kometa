@@ -116,13 +116,16 @@ function setSetting(key, value) {
 }
 
 // Первичное наполнение направлений обмена
+// Порядок задан оператором: сверху то, чем торгуют чаще
 const DEFAULT_DIRECTIONS = [
-  { from_cur: 'THB', to_cur: 'RUB', label: 'Баты → Рубли', payment_note: 'Приём батов, выплата на карту РФ', markup_pct: 2, min_from: 1000, max_from: 500000, sort: 10 },
-  { from_cur: 'RUB', to_cur: 'THB', label: 'Рубли → Баты', payment_note: 'Оплата по СБП или QR, выдача батов', markup_pct: 2, min_from: 3000, max_from: 1500000, sort: 20 },
-  { from_cur: 'THB', to_cur: 'USDT', label: 'Баты → USDT', payment_note: 'Выплата USDT, сеть обсуждаем в чате', markup_pct: 2, min_from: 1000, max_from: 500000, sort: 30 },
-  { from_cur: 'USDT', to_cur: 'THB', label: 'USDT → Баты', payment_note: 'Приём USDT, выдача батов', markup_pct: 2, min_from: 30, max_from: 15000, sort: 40 },
-  { from_cur: 'RUB', to_cur: 'CNY', label: 'Рубли → Юани (Alipay)', payment_note: 'Пополнение Alipay юанями', markup_pct: 2.5, min_from: 3000, max_from: 1000000, sort: 50 },
-  { from_cur: 'USDT', to_cur: 'CNY', label: 'USDT → Юани (Alipay)', payment_note: 'Пополнение Alipay за USDT', markup_pct: 2.5, min_from: 30, max_from: 15000, sort: 70 },
+  { from_cur: 'USDT', to_cur: 'RUB', label: 'USDT → Рубли', payment_note: 'Приём USDT, выплата на карту РФ', markup_pct: 2, min_from: 30, max_from: 15000, sort: 10 },
+  { from_cur: 'RUB', to_cur: 'USDT', label: 'Рубли → USDT', payment_note: 'Оплата по СБП или QR, выдача USDT', markup_pct: 2, min_from: 3000, max_from: 1500000, sort: 20 },
+  { from_cur: 'RUB', to_cur: 'THB', label: 'Рубли → Баты', payment_note: 'Оплата по СБП или QR, выдача батов', markup_pct: 2, min_from: 3000, max_from: 1500000, sort: 30 },
+  { from_cur: 'THB', to_cur: 'RUB', label: 'Баты → Рубли', payment_note: 'Приём батов, выплата на карту РФ', markup_pct: 2, min_from: 1000, max_from: 500000, sort: 40 },
+  { from_cur: 'THB', to_cur: 'USDT', label: 'Баты → USDT', payment_note: 'Выплата USDT, сеть обсуждаем в чате', markup_pct: 2, min_from: 1000, max_from: 500000, sort: 50 },
+  { from_cur: 'USDT', to_cur: 'THB', label: 'USDT → Баты', payment_note: 'Приём USDT, выдача батов', markup_pct: 2, min_from: 30, max_from: 15000, sort: 60 },
+  { from_cur: 'RUB', to_cur: 'CNY', label: 'Рубли → Юани (Alipay)', payment_note: 'Пополнение Alipay юанями', markup_pct: 2.5, min_from: 3000, max_from: 1000000, sort: 70 },
+  { from_cur: 'USDT', to_cur: 'CNY', label: 'USDT → Юани (Alipay)', payment_note: 'Пополнение Alipay за USDT', markup_pct: 2.5, min_from: 30, max_from: 15000, sort: 80 },
 ];
 
 // Добавляет отсутствующие стандартные направления (по паре валют), не трогая существующие.
@@ -149,6 +152,28 @@ for (const row of trcRows) {
   db.prepare('UPDATE directions SET label = ?, payment_note = ? WHERE id = ?').run(clean(row.label), clean(row.payment_note), row.id);
 }
 if (trcRows.length) console.log(`[db] упоминание сети USDT убрано из ${trcRows.length} направлений`);
+
+// Миграция: обмен USDT на рубли и обратно — отдельные направления сайта.
+// Добавляем только эти две пары, остальное, что оператор удалил, не трогаем.
+const usdtRub = DEFAULT_DIRECTIONS.filter(d =>
+  (d.from_cur === 'USDT' && d.to_cur === 'RUB') || (d.from_cur === 'RUB' && d.to_cur === 'USDT'));
+const insDir = db.prepare(`INSERT INTO directions
+  (from_cur, to_cur, label, payment_note, markup_pct, min_from, max_from, sort)
+  VALUES (@from_cur, @to_cur, @label, @payment_note, @markup_pct, @min_from, @max_from, @sort)`);
+const dirExists = db.prepare('SELECT id FROM directions WHERE from_cur = ? AND to_cur = ?');
+let addedDirs = 0;
+for (const d of usdtRub) {
+  if (!dirExists.get(d.from_cur, d.to_cur)) { insDir.run(d); addedDirs++; }
+}
+if (addedDirs) console.log(`[db] добавлены направления USDT↔RUB: ${addedDirs}`);
+
+// Миграция: порядок направлений в списке задаётся кодом, а не тем, как их заводили
+const setSort = db.prepare('UPDATE directions SET sort = ? WHERE from_cur = ? AND to_cur = ? AND sort != ?');
+let resorted = 0;
+for (const d of DEFAULT_DIRECTIONS) {
+  resorted += setSort.run(d.sort, d.from_cur, d.to_cur, d.sort).changes;
+}
+if (resorted) console.log(`[db] порядок направлений обновлён: ${resorted}`);
 
 // Миграция: рубли принимаются по СБП и по QR, оплата картой больше не описывается
 const cardNote = db.prepare("UPDATE directions SET payment_note = 'Оплата по СБП или QR, выдача батов' WHERE from_cur = 'RUB' AND to_cur = 'THB' AND payment_note = 'Оплата с карты РФ, выдача батов'").run();
