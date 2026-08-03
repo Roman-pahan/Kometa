@@ -142,6 +142,8 @@ h2 { font-size: 24px; margin-bottom: 16px; }
 .hero h1 { letter-spacing: -.01em; }
 .hero h1 span { background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .hero p { max-width: 640px; margin-top: 12px; color: var(--muted); font-size: 17px; }
+/* Строка под слоганом: мелко и спокойно, значки валют чуть заметнее текста */
+.hero p.tagline { font-size: 14px; letter-spacing: .02em; opacity: .85; }
 
 /* Сетка курсов */
 .rates-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
