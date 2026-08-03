@@ -30,12 +30,18 @@ function fmtRate(r) {
   return Number(r).toLocaleString('ru-RU', { maximumFractionDigits: 6 });
 }
 
-// Курс всегда пишется той стороной, где число больше единицы: «1 THB = 2,43 RUB»
-// читается, а «1 RUB = 0,412111 THB» — нет.
+// Валюты на сайте показываются значками, а не кодами
+const CUR_SIGNS = { RUB: '₽', THB: '฿', USDT: '₮', CNY: '¥', USD: '$', EUR: '€' };
+function cur(code) {
+  return CUR_SIGNS[String(code || '').toUpperCase()] || code;
+}
+
+// Курс всегда пишется той стороной, где число больше единицы: «1 ฿ = 2,43 ₽»
+// читается, а «1 ₽ = 0,412111 ฿» — нет.
 function rateText(dir) {
   if (dir.rate == null) return 'уточняйте';
-  if (dir.rate >= 1) return `1 ${dir.from_cur} = ${fmtRate(dir.rate)} ${dir.to_cur}`;
-  return `1 ${dir.to_cur} = ${fmtRate(1 / dir.rate)} ${dir.from_cur}`;
+  if (dir.rate >= 1) return `1 ${cur(dir.from_cur)} = ${fmtRate(dir.rate)} ${cur(dir.to_cur)}`;
+  return `1 ${cur(dir.to_cur)} = ${fmtRate(1 / dir.rate)} ${cur(dir.from_cur)}`;
 }
 
 function fmtDate(s) {
@@ -53,8 +59,8 @@ async function applySiteName() {
   try {
     const { site_name } = await api('/api/site');
     if (!site_name) return;
-    document.querySelectorAll('#siteName').forEach(el => { el.textContent = site_name; });
-    document.title = document.title.replace('Обмен валют', site_name);
+    document.querySelectorAll('#siteName, #footerName').forEach(el => { el.textContent = site_name; });
+    document.title = document.title.replace('Kometa Exchange', site_name);
   } catch (_) { /* оставляем то, что в разметке */ }
 }
 

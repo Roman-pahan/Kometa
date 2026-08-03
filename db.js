@@ -116,16 +116,17 @@ function setSetting(key, value) {
 }
 
 // Первичное наполнение направлений обмена
-// Порядок задан оператором: сверху то, чем торгуют чаще
+// Порядок задан оператором: сверху то, чем торгуют чаще.
+// В названиях только значки валют: подробности клиент узнаёт внутри, у оператора.
 const DEFAULT_DIRECTIONS = [
-  { from_cur: 'USDT', to_cur: 'RUB', label: 'USDT → Рубли', payment_note: 'Приём USDT, выплата на карту РФ', markup_pct: 2, min_from: 30, max_from: 15000, sort: 10 },
-  { from_cur: 'RUB', to_cur: 'USDT', label: 'Рубли → USDT', payment_note: 'Оплата по СБП или QR, выдача USDT', markup_pct: 2, min_from: 3000, max_from: 1500000, sort: 20 },
-  { from_cur: 'RUB', to_cur: 'THB', label: 'Рубли → Баты', payment_note: 'Оплата по СБП или QR, выдача батов', markup_pct: 2, min_from: 3000, max_from: 1500000, sort: 30 },
-  { from_cur: 'THB', to_cur: 'RUB', label: 'Баты → Рубли', payment_note: 'Приём батов, выплата на карту РФ', markup_pct: 2, min_from: 1000, max_from: 500000, sort: 40 },
-  { from_cur: 'THB', to_cur: 'USDT', label: 'Баты → USDT', payment_note: 'Выплата USDT, сеть обсуждаем в чате', markup_pct: 2, min_from: 1000, max_from: 500000, sort: 50 },
-  { from_cur: 'USDT', to_cur: 'THB', label: 'USDT → Баты', payment_note: 'Приём USDT, выдача батов', markup_pct: 2, min_from: 30, max_from: 15000, sort: 60 },
-  { from_cur: 'RUB', to_cur: 'CNY', label: 'Рубли → Юани (Alipay)', payment_note: 'Пополнение Alipay юанями', markup_pct: 2.5, min_from: 3000, max_from: 1000000, sort: 70 },
-  { from_cur: 'USDT', to_cur: 'CNY', label: 'USDT → Юани (Alipay)', payment_note: 'Пополнение Alipay за USDT', markup_pct: 2.5, min_from: 30, max_from: 15000, sort: 80 },
+  { from_cur: 'USDT', to_cur: 'RUB', label: '₮ → ₽', payment_note: '', markup_pct: 2, min_from: 30, max_from: 15000, sort: 10 },
+  { from_cur: 'RUB', to_cur: 'USDT', label: '₽ → ₮', payment_note: '', markup_pct: 2, min_from: 3000, max_from: 1500000, sort: 20 },
+  { from_cur: 'RUB', to_cur: 'THB', label: '₽ → ฿', payment_note: '', markup_pct: 2, min_from: 3000, max_from: 1500000, sort: 30 },
+  { from_cur: 'THB', to_cur: 'RUB', label: '฿ → ₽', payment_note: '', markup_pct: 2, min_from: 1000, max_from: 500000, sort: 40 },
+  { from_cur: 'THB', to_cur: 'USDT', label: '฿ → ₮', payment_note: '', markup_pct: 2, min_from: 1000, max_from: 500000, sort: 50 },
+  { from_cur: 'USDT', to_cur: 'THB', label: '₮ → ฿', payment_note: '', markup_pct: 2, min_from: 30, max_from: 15000, sort: 60 },
+  { from_cur: 'RUB', to_cur: 'CNY', label: '₽ → ¥', payment_note: '', markup_pct: 2.5, min_from: 3000, max_from: 1000000, sort: 70 },
+  { from_cur: 'USDT', to_cur: 'CNY', label: '₮ → ¥', payment_note: '', markup_pct: 2.5, min_from: 30, max_from: 15000, sort: 80 },
 ];
 
 // Добавляет отсутствующие стандартные направления (по паре валют), не трогая существующие.
@@ -167,6 +168,15 @@ for (const d of usdtRub) {
 }
 if (addedDirs) console.log(`[db] добавлены направления USDT↔RUB: ${addedDirs}`);
 
+// Миграция: в названиях направлений остаются только значки валют, а способы
+// оплаты с публичной страницы уходят — их клиент выясняет у оператора
+const setLabel = db.prepare('UPDATE directions SET label = ?, payment_note = ? WHERE from_cur = ? AND to_cur = ? AND (label != ? OR payment_note != ?)');
+let relabelled = 0;
+for (const d of DEFAULT_DIRECTIONS) {
+  relabelled += setLabel.run(d.label, d.payment_note, d.from_cur, d.to_cur, d.label, d.payment_note).changes;
+}
+if (relabelled) console.log(`[db] названия направлений переведены на значки валют: ${relabelled}`);
+
 // Миграция: порядок направлений в списке задаётся кодом, а не тем, как их заводили
 const setSort = db.prepare('UPDATE directions SET sort = ? WHERE from_cur = ? AND to_cur = ? AND sort != ?');
 let resorted = 0;
@@ -184,7 +194,12 @@ const cnyIn = db.prepare("SELECT id FROM directions WHERE from_cur = 'CNY' AND e
 for (const row of cnyIn) db.prepare('UPDATE directions SET enabled = 0 WHERE id = ?').run(row.id);
 if (cnyIn.length) console.log(`[db] приём юаней отключён (${cnyIn.length} направление), включить можно в админке`);
 
-if (getSetting('site_name') === null) setSetting('site_name', 'Обмен валют');
+if (getSetting('site_name') === null) setSetting('site_name', 'Kometa Exchange');
+// Миграция: прежние названия обменника заменяются на текущее
+if (['Kometa', 'Обмен валют'].includes(getSetting('site_name'))) {
+  setSetting('site_name', 'Kometa Exchange');
+  console.log('[db] название сайта: Kometa Exchange');
+}
 if (getSetting('telegram_username') === null) setSetting('telegram_username', 'your_telegram');
 
 module.exports = { db, getSetting, setSetting, restoreDefaultDirections };

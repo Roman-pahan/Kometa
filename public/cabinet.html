@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Мои заявки — Обмен валют</title>
+  <title>Мои заявки — Kometa Exchange</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <meta name="theme-color" content="#080E22">
   <link rel="stylesheet" href="/styles.css">
@@ -11,7 +11,7 @@
 <body>
   <header class="site">
     <div class="container inner">
-      <a class="logo" href="/"><img class="mark" src="/logo.svg" alt="" width="30" height="30"><span id="siteName">Обмен валют</span></a>
+      <a class="logo" href="/"><img class="mark" src="/logo.svg" alt="" width="30" height="30"><span id="siteName">Kometa Exchange</span></a>
       <nav class="main" id="nav"></nav>
     </div>
   </header>
@@ -192,8 +192,8 @@
           <td>${o.id}</td>
           <td>${fmtDate(o.created_at)}</td>
           <td>${esc(o.direction_label)}</td>
-          <td>${fmtAmount(o.amount_from)} ${esc(o.from_cur)}</td>
-          <td>${fmtAmount(o.amount_to)} ${esc(o.to_cur)}</td>
+          <td>${fmtAmount(o.amount_from)} ${esc(cur(o.from_cur))}</td>
+          <td>${fmtAmount(o.amount_to)} ${esc(cur(o.to_cur))}</td>
           <td>${fmtRate(o.rate)}</td>
           <td><span class="badge ${esc(o.status)}">${STATUS_LABELS[o.status] || esc(o.status)}</span></td>
           <td class="muted">${esc(o.admin_comment || '')}</td>
