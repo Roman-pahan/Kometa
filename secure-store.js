@@ -43,4 +43,28 @@ function decryptBuffer(buf) {
   return Buffer.concat([decipher.update(ct), decipher.final()]);
 }
 
-module.exports = { encryptBuffer, decryptBuffer };
+// Отдельный ключ для печатей целостности, выведенный из основного.
+// Так подпись и шифрование не используют один и тот же ключ.
+const SEAL_KEY = crypto.createHmac('sha256', KEY).update('order-seal-v1').digest();
+
+// Печать по содержимому: любое изменение данных делает её недействительной.
+// Ключ лежит вне базы, поэтому переписать строку и пересчитать печать
+// не получится даже при полном доступе к файлу базы.
+function sealData(value) {
+  return crypto.createHmac('sha256', SEAL_KEY).update(String(value)).digest('hex');
+}
+
+// Проверка печати за постоянное время, чтобы не подсказывать подбор
+function verifySeal(value, seal) {
+  const expected = Buffer.from(sealData(value), 'hex');
+  const supplied = Buffer.from(String(seal || ''), 'hex');
+  if (expected.length !== supplied.length) return false;
+  return crypto.timingSafeEqual(expected, supplied);
+}
+
+// Отпечаток содержимого файла: ловит подмену картинки на диске
+function hashBuffer(buf) {
+  return crypto.createHash('sha256').update(buf).digest('hex');
+}
+
+module.exports = { encryptBuffer, decryptBuffer, sealData, verifySeal, hashBuffer };

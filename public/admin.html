@@ -217,6 +217,12 @@
     // Всё, что клиент указал по заявке: способ отправки, выдача и реквизиты
     function orderDetails(o) {
       const lines = [];
+      // Печать целостности: реквизиты нельзя менять после создания заявки
+      if (o.integrity === 'broken') {
+        lines.push('<b style="color:#ff6b6b">⚠️ ДАННЫЕ ИЗМЕНЕНЫ ПОСЛЕ СОЗДАНИЯ — не выполняйте заявку, проверьте с клиентом</b>');
+      } else if (o.integrity === 'unsealed') {
+        lines.push('<span class="muted">Старая заявка, без печати</span>');
+      }
       if (o.payment_channel) lines.push('Отправка: ' + esc(CHANNEL_LABELS[o.payment_channel] || o.payment_channel));
       if (o.payout_type) lines.push('Выдача: ' + esc(PAYOUT_LABELS[o.payout_type] || o.payout_type));
       const who = [o.recipient_name, o.recipient_bank, o.recipient_account].filter(Boolean).map(esc).join(', ');

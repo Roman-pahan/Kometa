@@ -5,7 +5,7 @@ const express = require('express');
 const { db, getSetting, setSetting, restoreDefaultDirections } = require('./db');
 const { refreshRates, startAutoRefresh, directionRate, ratesInfo, applyPushedBoard } = require('./rates');
 const { sendMail, isConfigured: mailConfigured } = require('./mailer');
-const { encryptBuffer, decryptBuffer } = require('./secure-store');
+const { encryptBuffer, decryptBuffer, sealData, verifySeal, hashBuffer } = require('./secure-store');
 const { notifyAdmin, notifyAdminSafe, detectChatId, isConfigured: tgConfigured } = require('./notifier');
 const agent = require('./agent');
 
@@ -15,6 +15,29 @@ const app = express();
 app.set('trust proxy', 1);
 // Лимит увеличен: документы верификации приходят как base64-картинки
 app.use(express.json({ limit: '25mb' }));
+
+// Заголовки безопасности. Главное здесь — запрет чужих скриптов и кадров:
+// подменить то, что оператор видит на странице, можно только чужим кодом.
+app.use((req, res, next) => {
+  res.setHeader('Content-Security-Policy', [
+    "default-src 'self'",
+    // Свои страницы держат скрипты и стили внутри разметки
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    // Запросы уходят только на свой домен: увести данные некуда
+    "connect-src 'self'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+  ].join('; '));
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'same-origin');
+  res.setHeader('X-Frame-Options', 'DENY');
+  next();
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 const uploadsDir = path.join(__dirname, 'data', 'uploads');
@@ -228,6 +251,33 @@ const PAYMENT_CHANNELS = {
   bank: { label: 'Отправка с любого Вашего банка по СБП', requires_verification: false, min_rub: 20000, note: 'Проверка получения может занять некоторое время' },
 };
 
+// Поля заявки, которые после создания меняться не должны. Статус и комментарий
+// оператора сюда не входят: они по смыслу меняются в ходе работы.
+const SEALED_ORDER_FIELDS = [
+  'id', 'user_id', 'direction_id', 'amount_from', 'amount_to', 'rate',
+  'contact', 'requisites', 'comment', 'payment_channel', 'payout_type',
+  'recipient_name', 'recipient_bank', 'recipient_account',
+  'delivery_address', 'delivery_geo', 'attachment', 'attachment_hash', 'created_at',
+];
+
+// Одно и то же представление заявки для подписи и для проверки
+function orderFingerprint(order) {
+  return JSON.stringify(SEALED_ORDER_FIELDS.map(field => order[field] ?? null));
+}
+
+// Печать ставится один раз, сразу после создания заявки
+function sealOrder(orderId) {
+  const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(orderId);
+  if (!order) return;
+  db.prepare('UPDATE orders SET seal = ? WHERE id = ?').run(sealData(orderFingerprint(order)), orderId);
+}
+
+// Возвращает состояние заявки: печать цела, нарушена или её ещё нет
+function orderIntegrity(order) {
+  if (!order.seal) return 'unsealed';
+  return verifySeal(orderFingerprint(order), order.seal) ? 'ok' : 'broken';
+}
+
 // Как клиент получает деньги. Поля под каждый способ необязательные:
 // чего-то может не быть на руках, остальное оператор уточнит в чате.
 const PAYOUT_TYPES = {
@@ -275,23 +325,27 @@ app.post('/api/orders', requireAuth, (req, res) => {
   const text = value => String(value || '').trim().slice(0, 500);
   // Фото реквизитов шифруется так же, как документы верификации
   let attachment = null;
+  let attachmentHash = null;
   if (b.attachment) {
     const saved = saveImage(b.attachment, `order-u${req.user.id}`);
     if (saved.error) return res.status(400).json({ error: 'Вложение: ' + saved.error });
     attachment = saved.name;
+    attachmentHash = saved.hash;
   }
 
   const info = db.prepare(`
     INSERT INTO orders (user_id, direction_id, amount_from, amount_to, rate, contact, requisites, comment,
       payment_channel, payout_type, recipient_name, recipient_bank, recipient_account,
-      delivery_address, delivery_geo, attachment)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      delivery_address, delivery_geo, attachment, attachment_hash)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(req.user.id, dir.id, amount, Number(amountTo.toFixed(2)), Number(rate.toFixed(6)),
     String(contact).trim(), text(requisites), text(comment), channel,
     payoutType, text(b.recipient_name), text(b.recipient_bank), text(b.recipient_account),
     payoutType === 'delivery' ? text(b.delivery_address) : '',
     payoutType === 'delivery' ? text(b.delivery_geo) : '',
-    attachment);
+    attachment, attachmentHash);
+  // Печать ставится сразу: дальше реквизиты в заявке не меняются
+  sealOrder(info.lastInsertRowid);
   notifyNewOrder({
     id: info.lastInsertRowid, dir, amount, amountTo,
     email: req.user.email, contact: String(contact).trim(),
@@ -366,7 +420,14 @@ app.get('/api/orders', requireAuth, (req, res) => {
     FROM orders o JOIN directions d ON d.id = o.direction_id
     WHERE o.user_id = ? ORDER BY o.id DESC
   `).all(req.user.id);
-  res.json({ orders });
+  // Клиент тоже видит, что его реквизиты не подменяли, но не видит служебных полей
+  res.json({
+    orders: orders.map(order => {
+      const integrity = orderIntegrity(order);
+      const { attachment, attachment_hash, seal, ...rest } = order;
+      return { ...rest, integrity };
+    }),
+  });
 });
 
 // ---------- Верификация клиента ----------
@@ -384,7 +445,8 @@ function saveImage(dataUrl, prefix) {
   const ext = m[1] === 'jpeg' ? 'jpg' : m[1];
   const name = `${prefix}-${crypto.randomBytes(8).toString('hex')}.${ext}.enc`;
   fs.writeFileSync(path.join(uploadsDir, name), encryptBuffer(buf));
-  return { name };
+  // Отпечаток исходной картинки, чтобы поймать подмену файла на диске
+  return { name, hash: hashBuffer(buf) };
 }
 
 const IMAGE_MIME = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
@@ -467,10 +529,20 @@ app.get('/api/admin/clients', requireAdmin, (req, res) => {
 
 // Фото реквизитов из заявки: лежит зашифрованным, отдаётся только администратору
 app.get('/api/admin/orders/:orderId/attachment', requireAdmin, (req, res) => {
-  const row = db.prepare('SELECT attachment FROM orders WHERE id = ?').get(Number(req.params.orderId));
+  const row = db.prepare('SELECT * FROM orders WHERE id = ?').get(Number(req.params.orderId));
   if (!row || !row.attachment) return res.status(404).json({ error: 'Вложения нет' });
+  // Заявка с нарушенной печатью не показывается: файл мог быть подменён вместе с ней
+  if (orderIntegrity(row) === 'broken') {
+    console.error(`[integrity] вложение заявки №${row.id} не отдано: печать не сошлась`);
+    return res.status(409).json({ error: 'Данные заявки изменены после создания — вложению нельзя доверять' });
+  }
   try {
     const { buf, mime } = readUpload(row.attachment);
+    // Отпечаток ловит подмену самого файла на диске
+    if (row.attachment_hash && hashBuffer(buf) !== row.attachment_hash) {
+      console.error(`[integrity] вложение заявки №${row.id}: содержимое не совпадает с отпечатком`);
+      return res.status(409).json({ error: 'Файл на диске не совпадает с тем, что прислал клиент' });
+    }
     res.set('Content-Type', mime).send(buf);
   } catch (e) {
     console.error('[uploads] не удалось прочитать вложение заявки:', e.message);
@@ -598,8 +670,16 @@ app.get('/api/admin/orders', requireAdmin, (req, res) => {
     FROM orders o JOIN directions d ON d.id = o.direction_id JOIN users u ON u.id = o.user_id
     ORDER BY o.id DESC
   `).all();
-  // Имя файла вложения наружу не отдаём: оно читается отдельным запросом
-  res.json({ orders: orders.map(({ attachment, ...rest }) => rest) });
+  // Печать проверяется на каждом чтении: оператор должен видеть, что данные
+  // заявки те же, что прислал клиент. Имя файла вложения наружу не отдаём.
+  res.json({
+    orders: orders.map(order => {
+      const integrity = orderIntegrity(order);
+      if (integrity === 'broken') console.error(`[integrity] заявка №${order.id}: печать не сошлась`);
+      const { attachment, attachment_hash, seal, ...rest } = order;
+      return { ...rest, integrity };
+    }),
+  });
 });
 
 app.patch('/api/admin/orders/:id', requireAdmin, (req, res) => {

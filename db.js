@@ -98,6 +98,10 @@ for (const sql of [
   "ALTER TABLE orders ADD COLUMN delivery_geo TEXT DEFAULT ''",
   // Приложенное фото реквизитов, зашифровано как и документы верификации
   "ALTER TABLE orders ADD COLUMN attachment TEXT",
+  // Отпечаток содержимого фото: ловит подмену файла на диске
+  "ALTER TABLE orders ADD COLUMN attachment_hash TEXT",
+  // Печать целостности заявки: считается при создании и больше не меняется
+  "ALTER TABLE orders ADD COLUMN seal TEXT",
 ]) {
   try { db.exec(sql); } catch (_) { /* колонка уже существует */ }
 }
