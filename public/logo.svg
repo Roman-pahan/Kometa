@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Kometa">
+  <defs>
+    <!-- Орбита: от синего к фиолетовому, как след кометы -->
+    <linearGradient id="ring" x1="8" y1="56" x2="56" y2="8" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7B5CFF"/>
+      <stop offset=".55" stop-color="#2E7BFF"/>
+      <stop offset="1" stop-color="#5BE1FF"/>
+    </linearGradient>
+    <!-- Хвост: гаснет к концу -->
+    <linearGradient id="tail" x1="44" y1="20" x2="10" y2="54" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset=".35" stop-color="#7FE3FF"/>
+      <stop offset=".75" stop-color="#3D7BFF" stop-opacity=".75"/>
+      <stop offset="1" stop-color="#7B5CFF" stop-opacity="0"/>
+    </linearGradient>
+    <!-- Свечение ядра -->
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse"
+                    gradientTransform="translate(41 23) scale(13)">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity=".95"/>
+      <stop offset=".45" stop-color="#7FE3FF" stop-opacity=".45"/>
+      <stop offset="1" stop-color="#2E7BFF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Разрыв в кольце там, где комета вылетает наружу -->
+  <circle cx="32" cy="32" r="23" fill="none" stroke="url(#ring)" stroke-width="4.5"
+          stroke-linecap="round" pathLength="100" stroke-dasharray="68 32"
+          transform="rotate(-28 32 32)"/>
+
+  <circle cx="41" cy="23" r="13" fill="url(#glow)"/>
+
+  <!-- Хвост кометы: сужается от ядра к низу слева -->
+  <path d="M45.6 26.8 Q28 38 11 53 Q26 38 37.4 19.6 Z" fill="url(#tail)"/>
+
+  <circle cx="41" cy="23" r="4.6" fill="#FFFFFF"/>
+</svg>

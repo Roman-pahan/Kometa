@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Kometa">
+  <defs>
+    <linearGradient id="ring" x1="8" y1="56" x2="56" y2="8" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7B5CFF"/>
+      <stop offset=".55" stop-color="#2E7BFF"/>
+      <stop offset="1" stop-color="#5BE1FF"/>
+    </linearGradient>
+    <linearGradient id="tail" x1="44" y1="20" x2="10" y2="54" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset=".35" stop-color="#7FE3FF"/>
+      <stop offset=".75" stop-color="#3D7BFF" stop-opacity=".8"/>
+      <stop offset="1" stop-color="#7B5CFF" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse"
+                    gradientTransform="translate(41 23) scale(12)">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity=".9"/>
+      <stop offset="1" stop-color="#2E7BFF" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Тёмная подложка: иконка читается и на светлой панели браузера -->
+  <rect width="64" height="64" rx="14" fill="#080E22"/>
+
+  <circle cx="32" cy="32" r="21" fill="none" stroke="url(#ring)" stroke-width="5"
+          stroke-linecap="round" pathLength="100" stroke-dasharray="68 32"
+          transform="rotate(-28 32 32)"/>
+
+  <circle cx="41" cy="23" r="12" fill="url(#glow)"/>
+  <path d="M45 26.5 Q29 37 13 51 Q27 37 37 20 Z" fill="url(#tail)"/>
+  <circle cx="41" cy="23" r="4.4" fill="#FFFFFF"/>
+</svg>
