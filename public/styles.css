@@ -70,6 +70,26 @@ h2 { font-size: 24px; margin-bottom: 16px; }
 .muted { color: var(--muted); }
 .small { font-size: 13px; }
 
+/* Подсказка «?»: объяснение появляется при наведении и по нажатию на телефоне */
+.hint {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; margin-left: 4px;
+  border: 1px solid var(--muted); border-radius: 50%;
+  font-size: 11px; line-height: 1; color: var(--muted);
+  cursor: help; position: relative; user-select: none;
+}
+.hint::after {
+  content: attr(data-hint);
+  position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+  width: max-content; max-width: min(280px, 70vw);
+  padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--card); color: var(--text);
+  font-size: 12px; line-height: 1.4; text-align: left; white-space: normal;
+  opacity: 0; visibility: hidden; transition: opacity .12s; z-index: 5;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .35);
+}
+.hint:hover::after, .hint:focus::after { opacity: 1; visibility: visible; }
+
 /* Hero */
 .hero { padding: 56px 0 8px; }
 .hero h1 span { background: linear-gradient(135deg, var(--accent), var(--accent2)); -webkit-background-clip: text; background-clip: text; color: transparent; }

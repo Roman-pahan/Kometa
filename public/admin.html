@@ -207,6 +207,33 @@
     window.addEventListener('hashchange', () => openTab(location.hash.slice(1)));
 
     // ---------- Заявки ----------
+    const PAYOUT_LABELS = { transfer: 'Перевод', delivery: 'Доставка', atm: 'Банкомат' };
+    const CHANNEL_LABELS = {
+      qr: 'QR',
+      tbank: 'Т-Банк по СБП',
+      bank: 'Любой банк по СБП',
+    };
+
+    // Всё, что клиент указал по заявке: способ отправки, выдача и реквизиты
+    function orderDetails(o) {
+      const lines = [];
+      if (o.payment_channel) lines.push('Отправка: ' + esc(CHANNEL_LABELS[o.payment_channel] || o.payment_channel));
+      if (o.payout_type) lines.push('Выдача: ' + esc(PAYOUT_LABELS[o.payout_type] || o.payout_type));
+      const who = [o.recipient_name, o.recipient_bank, o.recipient_account].filter(Boolean).map(esc).join(', ');
+      if (who) lines.push(who);
+      if (o.delivery_address) lines.push('Адрес: ' + esc(o.delivery_address));
+      if (o.delivery_geo) {
+        const geo = String(o.delivery_geo);
+        lines.push(/^https?:\/\//.test(geo)
+          ? `<a href="${esc(geo)}" target="_blank" rel="noopener">Точка на карте</a>`
+          : 'Гео: ' + esc(geo));
+      }
+      if (o.has_attachment) lines.push(`<a href="/api/admin/orders/${o.id}/attachment" target="_blank" rel="noopener">📎 Фото реквизитов</a>`);
+      if (o.requisites) lines.push(esc(o.requisites));
+      if (o.comment) lines.push('💬 ' + esc(o.comment));
+      return lines.join('<br>');
+    }
+
     async function loadOrders() {
       const { orders } = await api('/api/admin/orders');
       document.getElementById('ordersEmpty').style.display = orders.length ? 'none' : 'block';
@@ -220,7 +247,7 @@
           <td><b>${fmtAmount(o.amount_to)} ${esc(o.to_cur)}</b></td>
           <td>${fmtRate(o.rate)}</td>
           <td>${esc(o.contact)}</td>
-          <td class="muted small">${esc(o.requisites || '')}${o.comment ? '<br>💬 ' + esc(o.comment) : ''}</td>
+          <td class="muted small">${orderDetails(o)}</td>
           <td>
             <select class="statusSel" style="min-width:140px">
               ${STATUS_OPTIONS.map(([v, l]) => `<option value="${v}" ${o.status === v ? 'selected' : ''}>${l}</option>`).join('')}

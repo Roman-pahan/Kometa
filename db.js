@@ -87,6 +87,17 @@ for (const sql of [
   'ALTER TABLE users ADD COLUMN pubkey TEXT',
   // Способ, которым клиент отправляет рубли: qr, tbank или bank
   "ALTER TABLE orders ADD COLUMN payment_channel TEXT DEFAULT ''",
+  // Как клиент получает деньги: transfer, delivery или atm
+  "ALTER TABLE orders ADD COLUMN payout_type TEXT DEFAULT ''",
+  // Реквизиты получателя, каждое поле необязательное
+  "ALTER TABLE orders ADD COLUMN recipient_name TEXT DEFAULT ''",
+  "ALTER TABLE orders ADD COLUMN recipient_bank TEXT DEFAULT ''",
+  "ALTER TABLE orders ADD COLUMN recipient_account TEXT DEFAULT ''",
+  // Доставка: адрес и ссылка на точку на карте
+  "ALTER TABLE orders ADD COLUMN delivery_address TEXT DEFAULT ''",
+  "ALTER TABLE orders ADD COLUMN delivery_geo TEXT DEFAULT ''",
+  // Приложенное фото реквизитов, зашифровано как и документы верификации
+  "ALTER TABLE orders ADD COLUMN attachment TEXT",
 ]) {
   try { db.exec(sql); } catch (_) { /* колонка уже существует */ }
 }

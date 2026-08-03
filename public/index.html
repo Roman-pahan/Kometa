@@ -71,10 +71,51 @@
               <input type="text" id="orderContact" placeholder="@username">
             </label>
             <label class="field">
-              <span>Реквизиты для получения (карта / кошелёк / Alipay)</span>
-              <input type="text" id="orderRequisites" placeholder="Например: карта 2200 ...">
+              <span>Как получить деньги <span class="hint" data-hint="Перевод — пришлём на счёт или карту. Доставка — привезём наличные, тогда укажите адрес. Банкомат — снимете наличные сами.">?</span></span>
+              <select id="orderPayout"></select>
             </label>
           </div>
+
+          <p class="muted small mt">
+            Реквизиты получателя <span class="hint" data-hint="Заполните то, что знаете. Ничего страшного, если чего-то нет: оператор уточнит недостающее в чате перед обменом.">?</span>
+            — все поля необязательные
+          </p>
+          <div class="grid2">
+            <label class="field">
+              <span>Имя и фамилия получателя</span>
+              <input type="text" id="orderRecipientName" placeholder="Иван Иванов">
+            </label>
+            <label class="field">
+              <span>Банк <span class="hint" data-hint="Название банка или кошелька, куда придут деньги: Т-Банк, Kasikorn, Alipay и так далее.">?</span></span>
+              <input type="text" id="orderRecipientBank" placeholder="Т-Банк, Kasikorn, Alipay">
+            </label>
+          </div>
+          <div class="grid2">
+            <label class="field">
+              <span>Номер карты или счёта <span class="hint" data-hint="Для рублей — номер карты. Для батов и юаней — номер счёта или привязанный к Alipay телефон.">?</span></span>
+              <input type="text" id="orderRecipientAccount" placeholder="2200 ... / 123-4-56789-0">
+            </label>
+            <label class="field">
+              <span>Фото реквизитов <span class="hint" data-hint="Можно приложить скриншот с реквизитами или QR-код. Файл хранится в зашифрованном виде и виден только оператору.">?</span></span>
+              <input type="file" id="orderAttachment" accept="image/*">
+            </label>
+          </div>
+
+          <div class="grid2" id="deliveryFields" style="display:none">
+            <label class="field">
+              <span>Адрес доставки</span>
+              <input type="text" id="orderDeliveryAddress" placeholder="Город, улица, дом, этаж">
+            </label>
+            <label class="field">
+              <span>Ссылка на карту или гео <span class="hint" data-hint="Ссылка из Google Maps или координаты — так курьер найдёт вас быстрее.">?</span></span>
+              <input type="text" id="orderDeliveryGeo" placeholder="https://maps.app.goo.gl/... или 12.9236, 100.8825">
+            </label>
+          </div>
+
+          <label class="field">
+            <span>Дополнительно о реквизитах</span>
+            <input type="text" id="orderRequisites" placeholder="Что-то, что важно знать оператору">
+          </label>
           <label class="field">
             <span>Комментарий</span>
             <textarea id="orderComment" placeholder="Дополнительная информация (необязательно)"></textarea>
@@ -114,6 +155,39 @@
       return PUB.directions.find(d => d.id === id) || null;
     }
 
+    // Клиент, отказавшийся от верификации, больше не видит оплату по QR
+    let qrHidden = false;
+
+    // Читает приложенное фото как data-URL, чтобы отправить его вместе с заявкой
+    function readAttachment() {
+      const file = document.getElementById('orderAttachment').files[0];
+      if (!file) return Promise.resolve(null);
+      if (!file.type.startsWith('image/')) return Promise.reject(new Error('Прикрепить можно только картинку'));
+      if (file.size > 10 * 1024 * 1024) return Promise.reject(new Error('Файл больше 10 МБ'));
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error('Не удалось прочитать файл'));
+        reader.readAsDataURL(file);
+      });
+    }
+
+    // Список способов отправки: QR исчезает, если клиент от него отказался
+    function renderChannels() {
+      const select = document.getElementById('channelSelect');
+      const chosen = select.value;
+      const list = (PUB.payment_channels || []).filter(c => !(qrHidden && c.requires_verification));
+      select.innerHTML = list.map(c => `<option value="${esc(c.key)}">${esc(c.label)}</option>`).join('');
+      // Возвращаем прежний выбор, если он ещё в списке
+      if (list.some(c => c.key === chosen)) select.value = chosen;
+    }
+
+    // Адрес и гео нужны только при доставке
+    function applyPayoutRules() {
+      const isDelivery = document.getElementById('orderPayout').value === 'delivery';
+      document.getElementById('deliveryFields').style.display = isDelivery ? 'grid' : 'none';
+    }
+
     // Способ отправки рублей спрашивается только там, где клиент платит рублями
     function currentChannel() {
       const key = document.getElementById('channelSelect').value;
@@ -142,8 +216,9 @@
           <a href="/cabinet.html">Пройти верификацию</a>
           <button class="btn small" type="button" id="withoutVerifyBtn">Обменять без верификации</button>`;
         document.getElementById('withoutVerifyBtn').onclick = () => {
-          const other = (PUB.payment_channels || []).find(c => !c.requires_verification);
-          if (other) document.getElementById('channelSelect').value = other.key;
+          // QR убирается из списка совсем: клиент выбрал обмен без верификации
+          qrHidden = true;
+          renderChannels();
           recalc();
         };
       }
@@ -208,8 +283,12 @@
       const sel = document.getElementById('dirSelect');
       sel.innerHTML = PUB.directions.map(d => `<option value="${d.id}">${esc(d.label)}</option>`).join('');
       // Способы отправки рублей приходят с сервера вместе с их условиями
-      document.getElementById('channelSelect').innerHTML = (PUB.payment_channels || [])
-        .map(c => `<option value="${esc(c.key)}">${esc(c.label)}</option>`).join('');
+      renderChannels();
+      // Способы выдачи тоже описывает сервер
+      document.getElementById('orderPayout').innerHTML = (PUB.payout_types || [])
+        .map(p => `<option value="${esc(p.key)}">${esc(p.label)}</option>`).join('');
+      document.getElementById('orderPayout').onchange = applyPayoutRules;
+      applyPayoutRules();
       renderRates();
       recalc();
 
@@ -229,6 +308,14 @@
         hideMsg(msg);
         const dir = currentDir();
         if (applyChannelRules()) return;
+        // Картинка уходит вместе с заявкой и хранится на сервере зашифрованной
+        let attachment = null;
+        try {
+          attachment = await readAttachment();
+        } catch (e) {
+          showMsg(msg, e.message);
+          return;
+        }
         try {
           const r = await api('/api/orders', 'POST', {
             direction_id: dir.id,
@@ -237,6 +324,13 @@
             requisites: document.getElementById('orderRequisites').value,
             comment: document.getElementById('orderComment').value,
             payment_channel: dir.from_cur === 'RUB' ? document.getElementById('channelSelect').value : '',
+            payout_type: document.getElementById('orderPayout').value,
+            recipient_name: document.getElementById('orderRecipientName').value,
+            recipient_bank: document.getElementById('orderRecipientBank').value,
+            recipient_account: document.getElementById('orderRecipientAccount').value,
+            delivery_address: document.getElementById('orderDeliveryAddress').value,
+            delivery_geo: document.getElementById('orderDeliveryGeo').value,
+            attachment,
           });
           showMsg(msg, `Заявка №${r.id} создана! Перенаправляем в личный кабинет...`, 'ok');
           setTimeout(() => location.href = '/cabinet.html', 1200);

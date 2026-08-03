@@ -207,6 +207,8 @@ app.get('/api/public', (req, res) => {
       min_rub: value.min_rub,
       note: value.note || '',
     })),
+    // Способы выдачи, чтобы форма спрашивала ровно то, что нужно оператору
+    payout_types: Object.entries(PAYOUT_TYPES).map(([key, label]) => ({ key, label })),
     rates: ratesInfo(),
     site_name: getSetting('site_name'),
     telegram: getSetting('telegram_username'),
@@ -226,8 +228,17 @@ const PAYMENT_CHANNELS = {
   bank: { label: 'Отправка с любого Вашего банка по СБП', requires_verification: false, min_rub: 20000, note: 'Проверка получения может занять некоторое время' },
 };
 
+// Как клиент получает деньги. Поля под каждый способ необязательные:
+// чего-то может не быть на руках, остальное оператор уточнит в чате.
+const PAYOUT_TYPES = {
+  transfer: 'Перевод',
+  delivery: 'Доставка',
+  atm: 'Банкомат',
+};
+
 app.post('/api/orders', requireAuth, (req, res) => {
   const { direction_id, amount_from, contact, requisites, comment, payment_channel } = req.body || {};
+  const b = req.body || {};
   const dir = db.prepare('SELECT * FROM directions WHERE id = ? AND enabled = 1').get(Number(direction_id));
   if (!dir) return res.status(400).json({ error: 'Направление не найдено' });
 
@@ -258,15 +269,37 @@ app.post('/api/orders', requireAuth, (req, res) => {
   const { rate } = directionRate(dir);
   if (rate == null) return res.status(503).json({ error: 'Курс временно недоступен, попробуйте позже' });
   const amountTo = amount * rate;
+  // Способ выдачи: незнакомое значение считаем обычным переводом
+  const payoutType = PAYOUT_TYPES[String(b.payout_type || '')] ? String(b.payout_type) : 'transfer';
+  // Каждое поле реквизитов необязательное, поэтому просто подрезаем пробелы
+  const text = value => String(value || '').trim().slice(0, 500);
+  // Фото реквизитов шифруется так же, как документы верификации
+  let attachment = null;
+  if (b.attachment) {
+    const saved = saveImage(b.attachment, `order-u${req.user.id}`);
+    if (saved.error) return res.status(400).json({ error: 'Вложение: ' + saved.error });
+    attachment = saved.name;
+  }
+
   const info = db.prepare(`
-    INSERT INTO orders (user_id, direction_id, amount_from, amount_to, rate, contact, requisites, comment, payment_channel)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO orders (user_id, direction_id, amount_from, amount_to, rate, contact, requisites, comment,
+      payment_channel, payout_type, recipient_name, recipient_bank, recipient_account,
+      delivery_address, delivery_geo, attachment)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(req.user.id, dir.id, amount, Number(amountTo.toFixed(2)), Number(rate.toFixed(6)),
-    String(contact).trim(), String(requisites || '').trim(), String(comment || '').trim(), channel);
+    String(contact).trim(), text(requisites), text(comment), channel,
+    payoutType, text(b.recipient_name), text(b.recipient_bank), text(b.recipient_account),
+    payoutType === 'delivery' ? text(b.delivery_address) : '',
+    payoutType === 'delivery' ? text(b.delivery_geo) : '',
+    attachment);
   notifyNewOrder({
     id: info.lastInsertRowid, dir, amount, amountTo,
     email: req.user.email, contact: String(contact).trim(),
     channel: PAYMENT_CHANNELS[channel]?.label || '',
+    payout: PAYOUT_TYPES[payoutType],
+    recipient: [text(b.recipient_name), text(b.recipient_bank), text(b.recipient_account)].filter(Boolean).join(', '),
+    delivery: payoutType === 'delivery' ? [text(b.delivery_address), text(b.delivery_geo)].filter(Boolean).join(' · ') : '',
+    hasAttachment: !!attachment,
   });
   res.json({ ok: true, id: info.lastInsertRowid });
 });
@@ -279,10 +312,14 @@ function escapeHtml(text) {
 // Уведомление о новой заявке. Если агент подключён и умеет считать это направление,
 // добавляем его расчёт: себестоимость, маржу и черновик ответа клиенту.
 function notifyNewOrder(order) {
-  const { id, dir, amount, amountTo, email, contact, channel } = order;
+  const { id, dir, amount, amountTo, email, contact, channel, payout, recipient, delivery, hasAttachment } = order;
   const head = `🆕 <b>Заявка №${id}</b>\n${escapeHtml(dir.label)}\n` +
     `Отдаёт: ${amount} ${dir.from_cur} → Получает: ${amountTo.toFixed(2)} ${dir.to_cur}\n` +
     (channel ? `Отправка: ${escapeHtml(channel)}\n` : '') +
+    (payout ? `Выдача: ${escapeHtml(payout)}\n` : '') +
+    (recipient ? `Реквизиты: ${escapeHtml(recipient)}\n` : '') +
+    (delivery ? `Доставка: ${escapeHtml(delivery)}\n` : '') +
+    (hasAttachment ? 'Приложено фото реквизитов\n' : '') +
     `Клиент: ${escapeHtml(email)}\nКонтакт: ${escapeHtml(contact)}`;
 
   const agentDirection = agent.directionForAgent(dir.from_cur, dir.to_cur);
@@ -428,6 +465,19 @@ app.get('/api/admin/clients', requireAdmin, (req, res) => {
   res.json({ clients });
 });
 
+// Фото реквизитов из заявки: лежит зашифрованным, отдаётся только администратору
+app.get('/api/admin/orders/:orderId/attachment', requireAdmin, (req, res) => {
+  const row = db.prepare('SELECT attachment FROM orders WHERE id = ?').get(Number(req.params.orderId));
+  if (!row || !row.attachment) return res.status(404).json({ error: 'Вложения нет' });
+  try {
+    const { buf, mime } = readUpload(row.attachment);
+    res.set('Content-Type', mime).send(buf);
+  } catch (e) {
+    console.error('[uploads] не удалось прочитать вложение заявки:', e.message);
+    res.status(500).json({ error: 'Не удалось расшифровать файл (проверьте secret.key)' });
+  }
+});
+
 app.get('/api/admin/verifications/:userId/file/:kind', requireAdmin, (req, res) => {
   const col = req.params.kind === 'selfie' ? 'verify_selfie' : 'verify_passport';
   const u = db.prepare(`SELECT ${col} AS f FROM users WHERE id = ?`).get(Number(req.params.userId));
@@ -543,11 +593,13 @@ app.post('/api/admin/chat/:userId/messages', requireAdmin, (req, res) => {
 
 app.get('/api/admin/orders', requireAdmin, (req, res) => {
   const orders = db.prepare(`
-    SELECT o.*, d.label AS direction_label, d.from_cur, d.to_cur, u.email AS user_email, u.verify_status AS user_verify
+    SELECT o.*, d.label AS direction_label, d.from_cur, d.to_cur, u.email AS user_email, u.verify_status AS user_verify,
+      (o.attachment IS NOT NULL) AS has_attachment
     FROM orders o JOIN directions d ON d.id = o.direction_id JOIN users u ON u.id = o.user_id
     ORDER BY o.id DESC
   `).all();
-  res.json({ orders });
+  // Имя файла вложения наружу не отдаём: оно читается отдельным запросом
+  res.json({ orders: orders.map(({ attachment, ...rest }) => rest) });
 });
 
 app.patch('/api/admin/orders/:id', requireAdmin, (req, res) => {
