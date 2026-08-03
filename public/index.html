@@ -145,6 +145,29 @@
     </div>
   </footer>
 
+  <!-- Сверка перед отправкой в Telegram: окно верхнего уровня, поэтому
+       оно показывается независимо от того, раскрыта форма заявки или нет -->
+  <div class="modal" id="recapModal" role="dialog" aria-modal="true" aria-labelledby="recapTitle">
+    <div class="modal-card">
+      <h3 id="recapTitle">Проверьте данные</h3>
+      <p class="muted small">
+        Сейчас откроется чат в Telegram, текст заявки уже будет вставлен —
+        вам останется только нажать «Отправить». Перед этим сверьте, пожалуйста,
+        реквизиты: деньги уйдут строго по ним.
+      </p>
+      <pre id="recapText" class="recap"></pre>
+      <label class="check">
+        <input type="checkbox" id="recapConfirm">
+        <span>Я проверил реквизиты, они верные</span>
+      </label>
+      <div class="modal-actions">
+        <button class="btn" type="button" id="recapCopyBtn">Скопировать текст</button>
+        <button class="btn success" type="button" id="recapSendBtn" disabled>Открыть Telegram</button>
+      </div>
+      <p class="muted small" id="recapHint"></p>
+    </div>
+  </div>
+
   <script src="/common.js"></script>
   <script>
     let PUB = { directions: [] };
@@ -157,6 +180,41 @@
 
     // Клиент, отказавшийся от верификации, больше не видит оплату по QR
     let qrHidden = false;
+
+    // Сверка после создания заявки: текст показывается целиком, и только
+    // после подтверждения открывается чат с уже вставленным сообщением
+    function openRecap(order) {
+      const modal = document.getElementById('recapModal');
+      const confirm = document.getElementById('recapConfirm');
+      const send = document.getElementById('recapSendBtn');
+      const hint = document.getElementById('recapHint');
+      const tg = String(order.telegram || PUB.telegram || '').replace(/^@/, '');
+
+      document.getElementById('recapText').textContent = order.recap || '';
+      confirm.checked = false;
+      send.disabled = true;
+      hint.textContent = tg ? '' : 'Telegram оператора не указан — скопируйте текст и отправьте вручную.';
+      modal.classList.add('open');
+
+      confirm.onchange = () => { send.disabled = !confirm.checked; };
+
+      document.getElementById('recapCopyBtn').onclick = async () => {
+        try {
+          await navigator.clipboard.writeText(order.recap || '');
+          hint.textContent = 'Текст скопирован.';
+        } catch (_) {
+          hint.textContent = 'Скопируйте текст вручную: выделите его и нажмите Ctrl+C.';
+        }
+      };
+
+      send.onclick = () => {
+        if (!confirm.checked) return;
+        // Текст уходит в поле ввода чата — клиенту остаётся нажать «Отправить»
+        if (tg) window.open(`https://t.me/${encodeURIComponent(tg)}?text=${encodeURIComponent(order.recap || '')}`, '_blank', 'noopener');
+        modal.classList.remove('open');
+        location.href = '/cabinet.html';
+      };
+    }
 
     // Читает приложенное фото как data-URL, чтобы отправить его вместе с заявкой
     function readAttachment() {
@@ -332,8 +390,10 @@
             delivery_geo: document.getElementById('orderDeliveryGeo').value,
             attachment,
           });
-          showMsg(msg, `Заявка №${r.id} создана! Перенаправляем в личный кабинет...`, 'ok');
-          setTimeout(() => location.href = '/cabinet.html', 1200);
+          showMsg(msg, `Заявка №${r.id} создана.`, 'ok');
+          // Сначала сверка, только потом чат: отправлять деньги по неверным
+          // реквизитам поздно будет отменять
+          openRecap(r);
         } catch (e) {
           showMsg(msg, e.message);
         }

@@ -347,6 +347,20 @@ app.post('/api/orders', requireAuth, (req, res) => {
     attachment, attachmentHash);
   // Печать ставится сразу: дальше реквизиты в заявке не меняются
   sealOrder(info.lastInsertRowid);
+
+  // Тот же текст сверки, что уходит оператору, возвращается клиенту:
+  // он подтверждает его на сайте и отправляет в чат одним нажатием
+  const recap = buildClientRecap({
+    id: info.lastInsertRowid, dir, amount, amountTo,
+    channel: PAYMENT_CHANNELS[channel]?.label || '',
+    payout: PAYOUT_TYPES[payoutType],
+    recipientName: text(b.recipient_name),
+    recipientBank: text(b.recipient_bank),
+    recipientAccount: text(b.recipient_account),
+    deliveryAddress: payoutType === 'delivery' ? text(b.delivery_address) : '',
+    deliveryGeo: payoutType === 'delivery' ? text(b.delivery_geo) : '',
+    hasAttachment: !!attachment,
+  });
   notifyNewOrder({
     id: info.lastInsertRowid, dir, amount, amountTo,
     email: req.user.email, contact: String(contact).trim(),
@@ -362,7 +376,8 @@ app.post('/api/orders', requireAuth, (req, res) => {
     deliveryAddress: payoutType === 'delivery' ? text(b.delivery_address) : '',
     deliveryGeo: payoutType === 'delivery' ? text(b.delivery_geo) : '',
   });
-  res.json({ ok: true, id: info.lastInsertRowid });
+  // Ник оператора нужен, чтобы открыть чат с готовым сообщением
+  res.json({ ok: true, id: info.lastInsertRowid, recap, telegram: getSetting('telegram_username') || '' });
 });
 
 // Экранирование текста для Telegram с parse_mode HTML
