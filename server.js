@@ -8,6 +8,7 @@ const { sendMail, isConfigured: mailConfigured } = require('./mailer');
 const { encryptBuffer, decryptBuffer, sealData, verifySeal, hashBuffer } = require('./secure-store');
 const { notifyAdmin, notifyAdminSafe, detectChatId, isConfigured: tgConfigured } = require('./notifier');
 const agent = require('./agent');
+const { buildClientRecap } = require('./order-recap');
 
 const PORT = process.env.PORT || 3210;
 const app = express();
@@ -354,6 +355,12 @@ app.post('/api/orders', requireAuth, (req, res) => {
     recipient: [text(b.recipient_name), text(b.recipient_bank), text(b.recipient_account)].filter(Boolean).join(', '),
     delivery: payoutType === 'delivery' ? [text(b.delivery_address), text(b.delivery_geo)].filter(Boolean).join(' · ') : '',
     hasAttachment: !!attachment,
+    // Отдельные поля нужны сообщению клиенту: там каждая строка своя
+    recipientName: text(b.recipient_name),
+    recipientBank: text(b.recipient_bank),
+    recipientAccount: text(b.recipient_account),
+    deliveryAddress: payoutType === 'delivery' ? text(b.delivery_address) : '',
+    deliveryGeo: payoutType === 'delivery' ? text(b.delivery_geo) : '',
   });
   res.json({ ok: true, id: info.lastInsertRowid });
 });
@@ -376,11 +383,21 @@ function notifyNewOrder(order) {
     (hasAttachment ? 'Приложено фото реквизитов\n' : '') +
     `Клиент: ${escapeHtml(email)}\nКонтакт: ${escapeHtml(contact)}`;
 
+  // Отдельным сообщением уходит готовый текст клиенту: нажал на него, скопировал,
+  // отправил. Ссылка рядом открывает чат клиента в Telegram.
+  const tg = String(contact || '').trim().replace(/^@/, '');
+  const recapText = `📋 <b>Клиенту на сверку</b>` +
+    (tg && /^[a-zA-Z0-9_]{4,32}$/.test(tg) ? ` — <a href="https://t.me/${tg}">открыть чат @${escapeHtml(tg)}</a>` : '') +
+    `\n\n<pre>${escapeHtml(buildClientRecap(order))}</pre>`;
+
   const agentDirection = agent.directionForAgent(dir.from_cur, dir.to_cur);
   if (!agent.isConfigured() || !agentDirection) {
     notifyAdminSafe(head);
+    notifyAdminSafe(recapText);
     return;
   }
+  // Сверку отправляем сразу, не дожидаясь расчёта агента
+  notifyAdminSafe(recapText);
 
   (async () => {
     try {
