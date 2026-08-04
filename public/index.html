@@ -72,7 +72,7 @@
         <!-- Форма заявки (раскрывается) -->
         <div id="orderForm" style="display:none" class="mt">
           <hr style="border-color: var(--border); margin-bottom: 18px;">
-          <div class="grid2">
+          <div class="form-grid">
             <label class="field">
               <span>Ваш Telegram для связи *</span>
               <input type="text" id="orderContact" placeholder="@username">
@@ -87,7 +87,7 @@
             Реквизиты получателя <span class="hint" data-hint="Заполните то, что знаете. Ничего страшного, если чего-то нет: оператор уточнит недостающее в чате перед обменом.">?</span>
             — все поля необязательные
           </p>
-          <div class="grid2">
+          <div class="form-grid">
             <label class="field">
               <span>Имя и фамилия получателя</span>
               <input type="text" id="orderRecipientName" placeholder="Иван Иванов">
@@ -96,8 +96,6 @@
               <span>Банк <span class="hint" data-hint="Название банка или кошелька, куда придут деньги: Т-Банк, Kasikorn и так далее.">?</span></span>
               <input type="text" id="orderRecipientBank" placeholder="Т-Банк, Kasikorn">
             </label>
-          </div>
-          <div class="grid2">
             <label class="field">
               <span>Номер карты или счёта <span class="hint" data-hint="Для рублей — номер карты. Для батов и юаней — номер счёта или привязанный к кошельку телефон.">?</span></span>
               <input type="text" id="orderRecipientAccount" placeholder="2200 ... / 123-4-56789-0">
@@ -108,7 +106,7 @@
             </label>
           </div>
 
-          <div class="grid2" id="deliveryFields" style="display:none">
+          <div class="form-grid" id="deliveryFields" style="display:none">
             <label class="field">
               <span>Адрес доставки</span>
               <input type="text" id="orderDeliveryAddress" placeholder="Город, улица, дом, этаж">
@@ -119,14 +117,16 @@
             </label>
           </div>
 
-          <label class="field">
-            <span>Дополнительно о реквизитах</span>
-            <input type="text" id="orderRequisites" placeholder="Что-то, что важно знать оператору">
-          </label>
-          <label class="field">
-            <span>Комментарий</span>
-            <textarea id="orderComment" placeholder="Дополнительная информация (необязательно)"></textarea>
-          </label>
+          <div class="form-grid">
+            <label class="field">
+              <span>Дополнительно о реквизитах</span>
+              <input type="text" id="orderRequisites" placeholder="Что-то, что важно знать оператору">
+            </label>
+            <label class="field">
+              <span>Комментарий</span>
+              <input type="text" id="orderComment" placeholder="Что-то ещё, что нам стоит знать">
+            </label>
+          </div>
           <div class="msg" id="orderMsg"></div>
           <button class="btn primary" id="submitOrderBtn">Отправить заявку</button>
         </div>

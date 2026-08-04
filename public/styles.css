@@ -53,11 +53,17 @@ header.site .inner {
   font-size: 20px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase;
   color: var(--text); display: flex; align-items: center; gap: 10px;
 }
-.logo:hover { text-decoration: none; }
-/* Комета в шапке слегка светится, как на макете */
+.logo { transition: color .18s, text-shadow .18s; }
+.logo:hover { text-decoration: none; color: #cfefff; text-shadow: 0 0 14px rgba(91, 225, 255, .75), 0 0 34px rgba(46, 123, 255, .45); }
+/* Комета в шапке слегка светится, а при наведении разгорается вместе с надписью */
 .logo .mark {
   width: 30px; height: 30px; display: block;
   filter: drop-shadow(0 0 8px rgba(46, 123, 255, .55));
+  transition: filter .18s, transform .18s;
+}
+.logo:hover .mark {
+  filter: drop-shadow(0 0 14px rgba(91, 225, 255, .85));
+  transform: scale(1.06);
 }
 nav.main { display: flex; align-items: center; gap: 16px; }
 nav.main a { color: var(--muted); font-size: 15px; }
@@ -163,7 +169,8 @@ h2 { font-size: 24px; margin-bottom: 16px; }
 
 /* Формы */
 label.field { display: block; margin-bottom: 14px; }
-label.field span { display: block; font-size: 13.5px; color: var(--muted); margin-bottom: 5px; }
+/* Только подпись поля, иначе правило ломает вложенные значки вроде «?» */
+label.field > span:first-child { display: block; font-size: 13.5px; color: var(--muted); margin-bottom: 5px; }
 input, select, textarea {
   width: 100%; padding: 11px 13px; border-radius: 10px; border: 1px solid var(--border);
   background: var(--bg2); color: var(--text); font-size: 15px; font-family: inherit;
@@ -205,6 +212,16 @@ select.pair-select { font-size: 17px; letter-spacing: .06em; }
   position: absolute; right: 14px; top: 50%; transform: translateY(-50%);
   color: var(--muted); font-size: 16px; pointer-events: none;
 }
+
+/* Поля заявки: короткому тексту не нужна строка во всю карточку,
+   поэтому колонки набираются сами — по три на широком экране, по одной на телефоне */
+.form-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0 18px; align-items: start;
+}
+#orderForm { max-width: 900px; }
+/* Длинному адресу нужна вся строка, короткому имени — нет */
+#orderForm .field.wide { grid-column: 1 / -1; }
 
 /* Кнопка и предупреждения — во всю ширину карточки */
 .calc-actions { margin-top: 16px; display: flex; gap: 12px; flex-wrap: wrap; }
