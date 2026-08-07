@@ -232,6 +232,12 @@ if (['Kometa', 'Обмен валют'].includes(getSetting('site_name'))) {
   setSetting('site_name', 'Kometa Exchange');
   console.log('[db] название сайта: Kometa Exchange');
 }
-if (getSetting('telegram_username') === null) setSetting('telegram_username', 'your_telegram');
+if (getSetting('telegram_username') === null) setSetting('telegram_username', 'Kometa_ex');
+// Миграция: связь с клиентами переехала на канал обменника.
+// Заменяются только прежние значения — ник, выставленный вручную, не трогаем.
+if (['your_telegram', 'Happy_Pattaya'].includes(getSetting('telegram_username'))) {
+  setSetting('telegram_username', 'Kometa_ex');
+  console.log('[db] Telegram для связи: @Kometa_ex');
+}
 
 module.exports = { db, getSetting, setSetting, restoreDefaultDirections };
