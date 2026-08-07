@@ -231,6 +231,25 @@ select.pair-select { font-size: 17px; letter-spacing: .06em; }
 /* Предупреждение о верификации: текст сверху, действия отдельной строкой */
 .msg .notice-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
 
+/* Плитки статистики и график по дням */
+.stat-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.stat-tile {
+  padding: 14px 16px; border-radius: 12px;
+  border: 1px solid var(--border); background: var(--bg2);
+}
+.stat-value { font-size: 24px; font-weight: 800; color: var(--accent-soft); line-height: 1.2; }
+.stat-label { font-size: 12.5px; color: var(--muted); margin-top: 4px; }
+.chart {
+  display: flex; align-items: flex-end; gap: 6px;
+  height: 180px; padding: 10px 0; overflow-x: auto;
+}
+.chart-col { display: flex; flex-direction: column; justify-content: flex-end; align-items: center; height: 100%; min-width: 26px; }
+.chart-bar {
+  width: 100%; border-radius: 4px 4px 0 0; min-height: 2px;
+  background: linear-gradient(180deg, var(--accent-soft), var(--accent));
+}
+.chart-label { font-size: 10.5px; color: var(--muted); margin-top: 6px; white-space: nowrap; }
+
 /* Таблицы */
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 14px; }

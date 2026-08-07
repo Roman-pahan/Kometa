@@ -11,6 +11,42 @@ async function api(url, method = 'GET', body) {
   return data;
 }
 
+// ---------- Учёт рекламного трафика ----------
+// Страница сообщает серверу, что её открыли, и что нажали на кнопку.
+// Внешний вид и поведение сайта при этом не меняются: если запрос не прошёл,
+// посетитель этого не замечает.
+function trackEvent(event) {
+  try {
+    const ref = new URLSearchParams(location.search).get('ref') || '';
+    // keepalive нужен для клика по ссылке: браузер иначе бросает запрос при уходе
+    fetch('/api/track', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ref, event, path: location.pathname }),
+      keepalive: true,
+    }).catch(() => {});
+  } catch (_) { /* счётчик не должен мешать работе страницы */ }
+}
+
+// Кнопки, по которым видно намерение: расчёт обмена и уход в Telegram
+function trackClicks() {
+  document.addEventListener('click', (e) => {
+    const el = e.target.closest('a, button');
+    if (!el) return;
+    const href = (el.getAttribute('href') || '');
+    if (/t\.me\//.test(href)) return trackEvent('telegram_click');
+    if (['createOrderBtn', 'submitOrderBtn', 'recapSendBtn'].includes(el.id) || href === '#calc') {
+      trackEvent('exchange_click');
+    }
+  }, true);
+}
+
+// Запускается на каждой странице сайта, кроме админки
+if (!location.pathname.startsWith('/admin')) {
+  trackEvent('visit');
+  document.addEventListener('DOMContentLoaded', trackClicks);
+}
+
 const STATUS_LABELS = {
   new: 'Новая',
   processing: 'В работе',

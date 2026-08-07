@@ -9,6 +9,7 @@ const { encryptBuffer, decryptBuffer, sealData, verifySeal, hashBuffer } = requi
 const { notifyAdmin, notifyAdminSafe, detectChatId, isConfigured: tgConfigured } = require('./notifier');
 const agent = require('./agent');
 const { buildClientRecap } = require('./order-recap');
+const tracking = require('./tracking');
 
 const PORT = process.env.PORT || 3210;
 const app = express();
@@ -138,6 +139,72 @@ app.post('/api/logout', (req, res) => {
 app.get('/api/me', (req, res) => {
   const user = getSessionUser(req);
   res.json({ user });
+});
+
+// ---------- Учёт рекламного трафика ----------
+
+// Сайт сам сообщает о посещении и о нажатиях. Открытый эндпоинт: он только
+// пишет обезличенную строку и ничего не отдаёт наружу.
+app.post('/api/track', (req, res) => {
+  const { ref, event, path: page } = req.body || {};
+  try {
+    const result = tracking.recordEvent(req, res, { ref, event, path: page });
+    res.json({ ok: true, recorded: result.recorded });
+  } catch (e) {
+    // Счётчик никогда не должен ломать страницу клиенту
+    console.error('[track] не записано:', e.message);
+    res.json({ ok: false });
+  }
+});
+
+app.get('/api/admin/stats', requireAdmin, (req, res) => {
+  const { from = '', to = '', ref } = req.query || {};
+  res.json({
+    summary: tracking.summary({ from, to, ref: ref === undefined ? null : ref }),
+    sources: tracking.sourceRows({ from, to }),
+    timezone: tracking.TZ_SHIFT,
+  });
+});
+
+app.get('/api/admin/stats/source/:ref', requireAdmin, (req, res) => {
+  const { from = '', to = '' } = req.query || {};
+  res.json(tracking.sourceDetail(req.params.ref === 'direct' ? '' : req.params.ref, { from, to }));
+});
+
+app.get('/api/admin/sources', requireAdmin, (req, res) => {
+  res.json({ sources: db.prepare('SELECT * FROM ad_sources ORDER BY id DESC').all() });
+});
+
+app.post('/api/admin/sources', requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const ref = tracking.cleanRef(b.ref);
+  const title = String(b.title || '').trim();
+  if (!ref) return res.status(400).json({ error: 'Укажите ref: латиница, цифры, дефис и подчёркивание' });
+  if (!title) return res.status(400).json({ error: 'Укажите название Telegram-канала' });
+  if (db.prepare('SELECT id FROM ad_sources WHERE ref = ?').get(ref)) {
+    return res.status(400).json({ error: 'Источник с таким ref уже есть' });
+  }
+  const cost = b.cost === '' || b.cost == null ? null : Number(b.cost);
+  if (cost != null && !Number.isFinite(cost)) return res.status(400).json({ error: 'Стоимость должна быть числом' });
+  const info = db.prepare(`INSERT INTO ad_sources (ref, title, comment, cost, placed_on)
+    VALUES (?, ?, ?, ?, ?)`).run(ref, title, String(b.comment || '').trim(), cost, String(b.placed_on || '').trim() || null);
+  res.json({ ok: true, id: info.lastInsertRowid, ref, link: tracking.buildLink(ref) });
+});
+
+app.patch('/api/admin/sources/:id', requireAdmin, (req, res) => {
+  const b = req.body || {};
+  const source = db.prepare('SELECT * FROM ad_sources WHERE id = ?').get(Number(req.params.id));
+  if (!source) return res.status(404).json({ error: 'Источник не найден' });
+  // ref не меняется: иначе накопленная статистика повиснет на старом значении
+  const title = b.title === undefined ? source.title : String(b.title).trim() || source.title;
+  const comment = b.comment === undefined ? source.comment : String(b.comment).trim();
+  const cost = b.cost === undefined ? source.cost : (b.cost === '' || b.cost === null ? null : Number(b.cost));
+  if (cost != null && !Number.isFinite(cost)) return res.status(400).json({ error: 'Стоимость должна быть числом' });
+  const placed = b.placed_on === undefined ? source.placed_on : (String(b.placed_on).trim() || null);
+  const enabled = b.enabled === undefined ? source.enabled : (b.enabled ? 1 : 0);
+  db.prepare(`UPDATE ad_sources SET title = ?, comment = ?, cost = ?, placed_on = ?, enabled = ? WHERE id = ?`)
+    .run(title, comment, cost, placed, enabled, source.id);
+  res.json({ ok: true });
 });
 
 // ---------- Восстановление пароля ----------

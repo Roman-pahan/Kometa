@@ -5,7 +5,10 @@ const Database = require('better-sqlite3');
 const dataDir = path.join(__dirname, 'data');
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
-const db = new Database(path.join(dataDir, 'exchange.db'));
+// Путь к базе можно переопределить: тесты работают на своей копии,
+// чтобы никогда не трогать боевые данные
+const dbFile = process.env.DB_FILE || path.join(dataDir, 'exchange.db');
+const db = new Database(dbFile);
 db.pragma('journal_mode = WAL');
 
 db.exec(`
@@ -72,6 +75,35 @@ CREATE TABLE IF NOT EXISTS messages (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_messages_user ON messages(user_id, id);
+
+-- Рекламные источники: один Telegram-канал = одна ссылка с параметром ref
+CREATE TABLE IF NOT EXISTS ad_sources (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  ref TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL,
+  comment TEXT DEFAULT '',
+  cost REAL,
+  placed_on TEXT,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Посещения и действия на сайте. IP не хранится: только необратимый хеш.
+-- Пустой ref означает прямой трафик, без рекламной ссылки.
+CREATE TABLE IF NOT EXISTS visits (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  visitor TEXT NOT NULL,
+  ref TEXT NOT NULL DEFAULT '',
+  event TEXT NOT NULL DEFAULT 'visit',
+  is_new INTEGER NOT NULL DEFAULT 0,
+  path TEXT DEFAULT '',
+  ip_hash TEXT DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_visits_ref ON visits(ref, created_at);
+CREATE INDEX IF NOT EXISTS idx_visits_visitor ON visits(visitor, created_at);
+CREATE INDEX IF NOT EXISTS idx_visits_created ON visits(created_at);
+CREATE INDEX IF NOT EXISTS idx_visits_event ON visits(event, created_at);
 `);
 
 // Миграция: поля верификации у пользователей (ALTER падает, если колонка уже есть)
