@@ -286,7 +286,9 @@ async function inviteToSetPassword(req, user, purpose) {
   console.log(`[invite] ${purpose} для ${user.email}: ${link}`);
   let mailed = false;
   try {
-    await sendMail({
+    // Ненастроенная почта не бросает ошибку, а честно отвечает sent: false —
+    // администратор должен увидеть ссылку, а не рапорт об отправке
+    const result = await sendMail({
       to: user.email,
       subject: `Доступ к статистике — ${getSetting('site_name')}`,
       text: `Вам открыт доступ к статистике сайта ${getSetting('site_name')}.\n`
@@ -296,7 +298,7 @@ async function inviteToSetPassword(req, user, purpose) {
         <p><a href="${link}">Задать пароль</a> — ссылка действует 7 дней.</p>
         <p>Логин — этот адрес почты.</p>`,
     });
-    mailed = true;
+    mailed = result.sent === true;
   } catch (e) {
     console.error('[invite] письмо не ушло:', e.message);
   }

@@ -234,6 +234,8 @@ test('маркетолог видит статистику и не видит о
   });
   assert.equal(invited.status, 200);
   assert.match(invited.data.link, /reset\.html\?token=[a-f0-9]{64}/, 'ссылка для установки пароля создаётся');
+  // Почта не настроена, значит письмо не ушло — и отчитываться об отправке нельзя
+  assert.equal(invited.data.mailed, false, 'без SMTP сервер не докладывает об отправленном письме');
 
   // До установки пароля войти нельзя
   const early = visitor();
