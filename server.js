@@ -1028,6 +1028,16 @@ app.get('/api/admin/settings', requireAdmin, (req, res) => {
     agent_url: getSetting('agent_url') || '',
     agent_token_set: !!(getSetting('agent_token') || ''),
     agent_configured: agent.isConfigured(),
+    // Готовые строки для .env бота: администратор копирует их одной кнопкой.
+    // Токен виден только ему — эндпоинт закрыт requireAdmin.
+    agent_env: [
+      `SITE_URL=${req.protocol}://${req.get('host')}`,
+      `AGENT_API_TOKEN=${getSetting('agent_token') || ''}`,
+    ].join('\n'),
+    // Когда бот последний раз присылал курсы
+    agent_rates_at: (() => {
+      try { return JSON.parse(getSetting('agent_board') || '{}').received_at || null; } catch (_) { return null; }
+    })(),
     // Секрет Google наружу не отдаётся — только признак, что он заполнен
     google_client_id: getSetting('google_client_id') || '',
     google_secret_set: !!(getSetting('google_client_secret') || ''),

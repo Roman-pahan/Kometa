@@ -74,11 +74,19 @@ before(async () => {
   assert.equal(login.status, 200, 'администратор должен войти');
   adminCookie = (login.headers.getSetCookie?.() || []).map(raw => raw.split(';')[0]).join('; ');
 
-  // Токен, которым бот подписывает снимок курсов, заводит администратор
+  // Токен для бота сайт заводит сам при первом запуске: придумывать нечего
+  const fresh = await asAdmin('/api/admin/settings');
+  assert.equal(fresh.data.agent_token_set, true, 'токен создаётся без участия человека');
+  assert.match(fresh.data.agent_env, /^SITE_URL=http.+\nAGENT_API_TOKEN=[a-f0-9]{48}$/,
+    'в админке лежат готовые строки для .env бота');
+
+  // Дальше тесты работают со своим токеном
   const saved = await asAdmin('/api/admin/settings', {
     method: 'PATCH', body: JSON.stringify({ agent_token: AGENT_TOKEN }),
   });
   assert.equal(saved.status, 200);
+  const changed = await asAdmin('/api/admin/settings');
+  assert.ok(changed.data.agent_env.endsWith('AGENT_API_TOKEN=' + AGENT_TOKEN), 'строки показывают текущий токен');
 });
 
 after(() => {

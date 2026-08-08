@@ -98,6 +98,14 @@ nav.main a.active { color: var(--text); font-weight: 600; }
 }
 .or-line::before, .or-line::after { content: ''; flex: 1; height: 1px; background: var(--border); }
 
+/* Готовые строки настройки: их копируют целиком, поэтому шрифт моноширинный */
+.env-block {
+  background: var(--card2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 14px; margin-bottom: 12px; overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 13px; line-height: 1.7; white-space: pre; user-select: all;
+}
+
 /* Карточки */
 .card {
   background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);

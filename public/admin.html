@@ -159,20 +159,32 @@
         </div>
 
         <div class="card mt">
-          <h2 style="font-size:18px">Агент расчёта сделок</h2>
-          <p class="muted small mt" id="agentStatus"></p>
-          <p class="muted small">Агент считает реальную себестоимость по стакану Bybit P2P и курсу Bitkub.
-            Когда он подключён, курсы на сайте строятся от рыночных данных, а к каждой заявке
-            приходит расчёт маржи и черновик ответа клиенту.</p>
-          <div class="grid2 mt">
-            <label class="field"><span>Адрес агента</span><input id="agentUrl" placeholder="https://kometa-agent.onrender.com"></label>
-            <label class="field"><span>Токен агента (пусто = не менять)</span><input id="agentToken" type="password" autocomplete="off"></label>
-          </div>
-          <div class="msg" id="agentMsg"></div>
+          <h2 style="font-size:18px">Бот оператора</h2>
+          <p class="muted small mt" id="agentRatesStatus"></p>
+          <p class="muted small">Цены на сайте называет бот: что проверили в Telegram — Т-Банк по стакану,
+            GlobalTrade, маржу — то и стоит на витрине. Чтобы связать их, скопируйте эти две строки
+            и вставьте в конец файла <code>.env</code> бота, затем перезапустите бота.</p>
+          <pre class="env-block mt" id="agentEnv"></pre>
           <div class="flex">
-            <button class="btn primary" id="saveAgentBtn">Сохранить</button>
-            <button class="btn" id="testAgentBtn">🔌 Проверить связь</button>
+            <button class="btn primary" id="copyEnvBtn">📋 Скопировать</button>
+            <span class="hint" id="copyEnvHint"></span>
           </div>
+
+          <details class="mt">
+            <summary class="muted small" style="cursor:pointer">Ещё: свой токен и адрес агента</summary>
+            <p class="muted small mt">Адрес нужен только если агент выложен в интернет и сайт ходит к нему сам.
+              Когда бот работает на вашем компьютере, поле остаётся пустым.</p>
+            <div class="grid2 mt">
+              <label class="field"><span>Адрес агента</span><input id="agentUrl" placeholder="https://kometa-agent.onrender.com"></label>
+              <label class="field"><span>Свой токен (пусто = не менять)</span><input id="agentToken" type="password" autocomplete="off"></label>
+            </div>
+            <p class="muted small" id="agentStatus"></p>
+            <div class="msg" id="agentMsg"></div>
+            <div class="flex">
+              <button class="btn primary" id="saveAgentBtn">Сохранить</button>
+              <button class="btn" id="testAgentBtn">🔌 Проверить связь</button>
+            </div>
+          </details>
         </div>
 
         <div class="card mt">
@@ -706,6 +718,11 @@
       document.getElementById('googleStatus').innerHTML = s.google_configured
         ? '✅ Вход через Google работает — кнопка видна на странице входа.'
         : '⚠️ Не настроен: кнопка «Войти через Google» скрыта.';
+      // Готовые строки для .env бота и время последней присылки курсов
+      document.getElementById('agentEnv').textContent = s.agent_env || '';
+      document.getElementById('agentRatesStatus').innerHTML = s.agent_rates_at
+        ? `✅ Бот присылает курсы. Последний раз: ${new Date(s.agent_rates_at).toLocaleString('ru-RU')}.`
+        : '⚠️ Бот ещё ни разу не присылал курсы — на витрине везде «курс по запросу».';
       const market = s.rates && s.rates.market;
       document.getElementById('agentStatus').innerHTML = s.agent_configured
         ? (market && market.used
@@ -713,6 +730,22 @@
             : '✅ Агент подключён, но рыночные курсы ещё не применены. Нажмите «Обновить базовые курсы» во вкладке курсов.')
         : '⚠️ Агент не подключён: курсы берутся официальные, расчёт по заявкам не приходит.';
     }
+
+    document.getElementById('copyEnvBtn').onclick = async () => {
+      const hint = document.getElementById('copyEnvHint');
+      const text = document.getElementById('agentEnv').textContent;
+      try {
+        await navigator.clipboard.writeText(text);
+        hint.textContent = 'Скопировано — вставьте в конец файла .env и перезапустите бота';
+      } catch (_) {
+        // Буфер обмена может быть закрыт браузером: тогда выделяем текст сами
+        const range = document.createRange();
+        range.selectNodeContents(document.getElementById('agentEnv'));
+        getSelection().removeAllRanges();
+        getSelection().addRange(range);
+        hint.textContent = 'Текст выделен — скопируйте его сочетанием Ctrl+C';
+      }
+    };
 
     document.getElementById('saveAgentBtn').onclick = async () => {
       const msg = document.getElementById('agentMsg');

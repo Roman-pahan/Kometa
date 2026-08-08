@@ -234,6 +234,14 @@ if (['Kometa', 'Обмен валют'].includes(getSetting('site_name'))) {
   setSetting('site_name', 'Kometa Exchange');
   console.log('[db] название сайта: Kometa Exchange');
 }
+// Пароль, которым бот оператора подписывает присланные курсы. Придумывать его
+// вручную незачем: сайт заводит случайный сам, а в админке показан готовый
+// кусок .env, который остаётся скопировать боту.
+if (!getSetting('agent_token')) {
+  setSetting('agent_token', require('crypto').randomBytes(24).toString('hex'));
+  console.log('[db] создан токен для бота — он показан в админке, в настройках');
+}
+
 if (getSetting('telegram_username') === null) setSetting('telegram_username', 'Kometa_ex');
 // Миграция: связь с клиентами переехала на канал обменника.
 // Заменяются только прежние значения — ник, выставленный вручную, не трогаем.
