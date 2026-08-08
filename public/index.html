@@ -311,7 +311,9 @@
         (dir.max_from ? ` · Макс: ${fmtAmount(dir.max_from)} ${cur(dir.from_cur)}` : '');
       if (dir.rate == null) {
         out.textContent = '—';
-        rateLine.textContent = 'Курс временно недоступен';
+        rateLine.textContent = dir.on_request
+          ? 'Курс по этому направлению называем в чате — напишите нам'
+          : 'Курс временно недоступен';
         return;
       }
       out.textContent = fmtAmount(amount * dir.rate);

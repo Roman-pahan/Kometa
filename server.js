@@ -423,11 +423,14 @@ app.get('/api/site', (req, res) => {
 app.get('/api/public', (req, res) => {
   const dirs = db.prepare('SELECT * FROM directions WHERE enabled = 1 ORDER BY sort, id').all();
   const directions = dirs.map(d => {
-    const { rate } = directionRate(d);
+    const { rate, source } = directionRate(d);
     return {
       id: d.id, from_cur: d.from_cur, to_cur: d.to_cur, label: d.label,
       payment_note: d.payment_note, min_from: d.min_from, max_from: d.max_from,
-      rate: rate != null ? Number(rate.toFixed(6)) : null,
+      // Восемь знаков: обратный курс должен разворачиваться в ту же цену
+      rate: rate != null ? Number(rate.toFixed(8)) : null,
+      // Направление без цены не «сломано», а считается по запросу
+      on_request: source === 'on_request',
     };
   });
   res.json({
@@ -526,8 +529,14 @@ app.post('/api/orders', requireAuth, (req, res) => {
   if (dir.min_from && amount < dir.min_from) return res.status(400).json({ error: `Минимальная сумма: ${dir.min_from} ${dir.from_cur}` });
   if (dir.max_from && amount > dir.max_from) return res.status(400).json({ error: `Максимальная сумма: ${dir.max_from} ${dir.from_cur}` });
   if (!contact || !String(contact).trim()) return res.status(400).json({ error: 'Укажите контакт (Telegram)' });
-  const { rate } = directionRate(dir);
-  if (rate == null) return res.status(503).json({ error: 'Курс временно недоступен, попробуйте позже' });
+  const { rate, source } = directionRate(dir);
+  if (rate == null) {
+    return res.status(503).json({
+      error: source === 'on_request'
+        ? 'По этому направлению курс называем в чате — напишите нам, посчитаем вручную'
+        : 'Курс временно недоступен, попробуйте позже',
+    });
+  }
   const amountTo = amount * rate;
   // Способ выдачи: незнакомое значение считаем обычным переводом
   const payoutType = PAYOUT_TYPES[String(b.payout_type || '')] ? String(b.payout_type) : 'transfer';

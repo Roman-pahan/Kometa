@@ -523,9 +523,12 @@
     // ---------- Курсы и направления ----------
     async function loadDirections() {
       const { directions, rates } = await api('/api/admin/directions');
-      document.getElementById('dirRatesInfo').textContent = rates.updatedAt
-        ? 'Базовые курсы из API обновлены: ' + new Date(rates.updatedAt).toLocaleString('ru-RU')
-        : 'Базовые курсы из API ещё не загружены.';
+      // Цены идут из бота: показываем, когда оператор проверял курс в последний раз
+      const fromBot = rates.market && rates.market.source === 'bot';
+      document.getElementById('dirRatesInfo').textContent = !rates.updatedAt
+        ? 'Курсы ещё не загружены.'
+        : (fromBot ? 'Курсы из бота, проверены: ' : 'Справочные курсы обновлены: ') +
+          new Date(rates.updatedAt).toLocaleString('ru-RU');
 
       document.getElementById('dirsGrid').innerHTML = directions.map(d => {
         const isManual = d.manual_rate != null && d.manual_rate > 0;
@@ -551,7 +554,7 @@
           <div class="mode-row mt">
             <label class="mode ${!isManual ? 'active' : ''}">
               <input type="radio" name="mode-${d.id}" class="f-mode-auto" ${!isManual ? 'checked' : ''}>
-              По API + наценка
+              Из бота
             </label>
             <label class="mode ${isManual ? 'active' : ''}">
               <input type="radio" name="mode-${d.id}" class="f-mode-manual" ${isManual ? 'checked' : ''}>
@@ -560,13 +563,14 @@
           </div>
 
           <div class="auto-block" style="display:${isManual ? 'none' : 'block'}">
-            <div class="flex mt" style="gap:8px">
-              <label class="field grow" style="margin:0"><span>Наценка, %</span>
-                <input class="f-markup" type="number" step="any" value="${d.markup_pct}"></label>
-              <div class="field grow" style="margin:0">
-                <span style="display:block;font-size:13.5px;color:var(--muted);margin-bottom:5px">Базовый курс API</span>
-                <div class="base-rate">${baseRate}</div>
-              </div>
+            <!-- Наценка сайта больше не участвует в цене, но значение сохраняем как было -->
+            <input class="f-markup" type="hidden" value="${d.markup_pct}">
+            <p class="hint mt">${d.rate_source === 'bot'
+              ? 'Цену задаёт бот: маржа и каналы настраиваются в Telegram.'
+              : 'Бот ещё не присылал цену по этому направлению — на сайте стоит «курс по запросу».'}</p>
+            <div class="field mt" style="margin:0">
+              <span style="display:block;font-size:13.5px;color:var(--muted);margin-bottom:5px">Справочный курс (не используется в цене)</span>
+              <div class="base-rate">${baseRate}</div>
             </div>
           </div>
 

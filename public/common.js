@@ -75,7 +75,8 @@ function cur(code) {
 // Курс всегда пишется той стороной, где число больше единицы: «1 ฿ = 2,43 ₽»
 // читается, а «1 ₽ = 0,412111 ฿» — нет.
 function rateText(dir) {
-  if (dir.rate == null) return 'уточняйте';
+  // Курс, который стол не котирует автоматически, называется в чате
+  if (dir.rate == null) return dir.on_request ? 'курс по запросу' : 'уточняйте';
   if (dir.rate >= 1) return `1 ${cur(dir.from_cur)} = ${fmtRate(dir.rate)} ${cur(dir.to_cur)}`;
   return `1 ${cur(dir.to_cur)} = ${fmtRate(1 / dir.rate)} ${cur(dir.from_cur)}`;
 }

@@ -14,6 +14,8 @@ let baseRates = null;   // { THB: 36.2, RUB: 79.5, CNY: 7.1, USD: 1, USDT: 1, ..
 let updatedAt = null;
 let marketInfo = { used: false, usdt_thb: null, rub_usdt: null, at: null, error: null };
 let marketMargins = null;   // { qr, tbank, global } — проценты, заданные в боте
+// Готовые цены клиенту по направлениям, присланные ботом: { RUB_THB: 0.369, ... }
+let clientRates = null;
 
 // Восстановление после перезапуска
 try {
@@ -24,6 +26,10 @@ try {
     updatedAt = parsed.updatedAt;
   }
 } catch (_) { /* игнорируем битые данные */ }
+
+// Цены, присланные ботом, действуют и сразу после перезапуска: они не зависят
+// от того, удалось ли сходить за справочными курсами.
+try { applyPushedBoard(); } catch (_) { /* пустой или битый набор */ }
 
 // Последний набор курсов, присланный ботом оператора
 function pushedBoard() {
@@ -39,10 +45,14 @@ function pushedBoard() {
 // от того, доступен ли агент снаружи.
 function applyPushedBoard() {
   const board = pushedBoard();
-  if (!board || !baseRates) return false;
-  if (board.usdt_thb) baseRates.THB = board.usdt_thb;
-  if (board.rub_usdt) baseRates.RUB = board.rub_usdt;
-  if (board.cny_per_usdt) baseRates.CNY = board.cny_per_usdt;
+  if (!board) return false;
+  // Цены клиенту приходят готовыми — сайт их не пересчитывает
+  clientRates = board.client && typeof board.client === 'object' ? board.client : null;
+  if (baseRates) {
+    if (board.usdt_thb) baseRates.THB = board.usdt_thb;
+    if (board.rub_usdt) baseRates.RUB = board.rub_usdt;
+    if (board.cny_per_usdt) baseRates.CNY = board.cny_per_usdt;
+  }
   marketMargins = board.margins || null;
   marketInfo = {
     used: true,
@@ -53,7 +63,7 @@ function applyPushedBoard() {
     at: board.received_at || null,
     error: null,
   };
-  setSetting('base_rates', JSON.stringify({ rates: baseRates, updatedAt: new Date().toISOString() }));
+  if (baseRates) setSetting('base_rates', JSON.stringify({ rates: baseRates, updatedAt: new Date().toISOString() }));
   return true;
 }
 
@@ -67,6 +77,7 @@ async function applyMarketRates(rates) {
     if (board.usdt_thb) rates.THB = board.usdt_thb;
     if (board.rub_usdt) rates.RUB = board.rub_usdt;
     if (board.cny_per_usdt) rates.CNY = board.cny_per_usdt;
+    clientRates = board.client && typeof board.client === 'object' ? board.client : null;
     marketMargins = board.margins || null;
     marketInfo = {
       used: true, source: 'bot',
@@ -130,29 +141,35 @@ function crossRate(fromCur, toCur) {
   return to / from;
 }
 
-// Наценка направления: маржа из бота, если агент её прислал, иначе своя из админки.
-// Маржа оператора едина для всех рублёвых направлений, поэтому берётся общая цифра.
-function markupFor(dir) {
-  if (!marketMargins) return { pct: dir.markup_pct, source: 'site' };
-  const pct = marketMargins.tbank ?? marketMargins.qr ?? marketMargins.global;
-  if (pct == null) return { pct: dir.markup_pct, source: 'site' };
-  return { pct, source: 'agent' };
+// Цена клиенту по направлению, посчитанная оператором в боте.
+// Где направление обслуживают несколько каналов, бот уже выбрал самый дешёвый
+// для клиента, поэтому здесь ничего не пересчитывается.
+function pushedRate(dir) {
+  if (!clientRates) return null;
+  const value = Number(clientRates[`${dir.from_cur}_${dir.to_cur}`]);
+  return Number.isFinite(value) && value > 0 ? value : null;
 }
 
-// Итоговый курс направления с учётом наценки или ручного курса
+// Итоговый курс направления.
+// Порядок один и тот же везде: ручной курс из админки, затем цена оператора.
+// Своего курса сайт не выдумывает: справочные курсы валют не имеют отношения
+// к тому, почём стол реально покупает и продаёт, и по ним легко уйти в минус.
 function directionRate(dir) {
-  if (dir.manual_rate != null && dir.manual_rate > 0) {
-    return { rate: dir.manual_rate, source: 'manual', base: crossRate(dir.from_cur, dir.to_cur) };
-  }
   const base = crossRate(dir.from_cur, dir.to_cur);
-  if (base == null) return { rate: null, source: 'none', base: null };
-  const markup = markupFor(dir);
-  const rate = base * (1 - markup.pct / 100);
-  return { rate, source: 'auto', base, markup_pct: markup.pct, markup_source: markup.source };
+  if (dir.manual_rate != null && dir.manual_rate > 0) {
+    return { rate: dir.manual_rate, source: 'manual', base };
+  }
+  const pushed = pushedRate(dir);
+  if (pushed != null) return { rate: pushed, source: 'bot', base };
+  // Направление, которое стол не котирует, честно считается «по запросу»
+  return { rate: null, source: 'on_request', base };
 }
 
 function ratesInfo() {
-  return { updatedAt, hasRates: !!baseRates, market: marketInfo };
+  // Возраст цены — это момент проверки курса оператором, а не время,
+  // когда сайт последний раз ходил за справочными курсами
+  const at = (clientRates && marketInfo.at) || updatedAt;
+  return { updatedAt: at, hasRates: !!(clientRates || baseRates), market: marketInfo };
 }
 
 module.exports = { refreshRates, startAutoRefresh, directionRate, crossRate, ratesInfo, applyPushedBoard };
