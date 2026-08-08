@@ -159,6 +159,23 @@ function summary({ from = '', to = '', ref = null } = {}) {
   };
 }
 
+// Посещения по дням за период: из этого рисуется гистограмма.
+// Дни считаются по местному времени проекта, иначе сутки съезжают.
+function dailyVisits({ from = '', to = '', ref = null } = {}) {
+  const period = periodWhere(from, to);
+  const refClause = ref === null ? '' : ' AND ref = ?';
+  const refParams = ref === null ? [] : [cleanRef(ref)];
+  return db.prepare(`
+    SELECT date(created_at, '${TZ_SHIFT}') AS day,
+           SUM(CASE WHEN event = 'visit' THEN 1 ELSE 0 END) AS visits,
+           COUNT(DISTINCT CASE WHEN event = 'visit' THEN visitor END) AS visitors,
+           SUM(CASE WHEN event = 'telegram_click' THEN 1 ELSE 0 END) AS telegram_clicks
+    FROM visits
+    WHERE 1 = 1${period.sql}${refClause}
+    GROUP BY day ORDER BY day
+  `).all(...period.params, ...refParams);
+}
+
 // Таблица источников: строка на каждый Telegram-канал плюс прямой трафик
 function sourceRows({ from = '', to = '' } = {}) {
   const period = periodWhere(from, to);
@@ -167,8 +184,10 @@ function sourceRows({ from = '', to = '' } = {}) {
       ref,
       COUNT(*) AS visits,
       COUNT(DISTINCT visitor) AS visitors,
-      MIN(datetime(created_at, '${TZ_SHIFT}')) AS first_visit,
-      MAX(datetime(created_at, '${TZ_SHIFT}')) AS last_visit,
+      -- Моменты отдаются в UTC: браузер сам переводит их в местное время.
+      -- Сдвиг здесь привёл бы ко второму переводу и часам «из будущего».
+      MIN(created_at) AS first_visit,
+      MAX(created_at) AS last_visit,
       SUM(CASE WHEN date(created_at, '${TZ_SHIFT}') = date('now', '${TZ_SHIFT}') THEN 1 ELSE 0 END) AS today,
       SUM(CASE WHEN date(created_at, '${TZ_SHIFT}') >= date('now', '${TZ_SHIFT}', '-6 days') THEN 1 ELSE 0 END) AS last7,
       SUM(CASE WHEN date(created_at, '${TZ_SHIFT}') >= date('now', '${TZ_SHIFT}', '-29 days') THEN 1 ELSE 0 END) AS last30
@@ -285,7 +304,7 @@ function buildLink(ref) {
 }
 
 module.exports = {
-  recordEvent, summary, sourceRows, sourceDetail, buildLink,
+  recordEvent, summary, sourceRows, sourceDetail, dailyVisits, buildLink,
   cleanRef, isBot, hashIp,
   VISITOR_COOKIE, REF_COOKIE, EVENTS, TZ_SHIFT,
 };

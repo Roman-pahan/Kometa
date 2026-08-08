@@ -23,6 +23,20 @@
         <button id="tabRegister">Регистрация</button>
       </div>
 
+      <!-- Кнопка появляется, только когда администратор завёл ключи Google -->
+      <div id="googleBox" style="display:none">
+        <a class="btn google" id="googleBtn" href="#">
+          <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
+            <path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.6l6.7-6.7C35.6 2.6 30.2 0 24 0 14.6 0 6.4 5.4 2.5 13.3l7.8 6.1C12.2 13.2 17.6 9.5 24 9.5z"/>
+            <path fill="#4285F4" d="M46.9 24.5c0-1.6-.1-3.2-.4-4.7H24v9h12.9c-.6 3-2.3 5.6-4.9 7.3l7.6 5.9c4.4-4.1 7.3-10.2 7.3-17.5z"/>
+            <path fill="#FBBC05" d="M10.3 28.6c-.5-1.5-.8-3-.8-4.6s.3-3.1.8-4.6l-7.8-6.1C.9 16.5 0 20.1 0 24s.9 7.5 2.5 10.7l7.8-6.1z"/>
+            <path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.6-5.9c-2.1 1.4-4.8 2.3-8.3 2.3-6.4 0-11.8-3.7-13.7-9.9l-7.8 6.1C6.4 42.6 14.6 48 24 48z"/>
+          </svg>
+          <span>Войти через Google</span>
+        </a>
+        <div class="or-line"><span>или по паролю</span></div>
+      </div>
+
       <form id="loginForm">
         <label class="field"><span>Email</span><input type="email" id="loginEmail" required autocomplete="email"></label>
         <label class="field"><span>Пароль</span><input type="password" id="loginPassword" required autocomplete="current-password"></label>
@@ -54,6 +68,17 @@
   <script>
     renderHeader('auth');
     const next = new URLSearchParams(location.search).get('next') || '/';
+
+    // Google-вход показываем только если ключи заведены в настройках
+    api('/api/site').then(s => {
+      if (!s.google_auth) return;
+      document.getElementById('googleBtn').href = '/api/auth/google?next=' + encodeURIComponent(next);
+      document.getElementById('googleBox').style.display = 'block';
+    }).catch(() => {});
+
+    if (new URLSearchParams(location.search).has('google_error')) {
+      showMsg(document.getElementById('loginMsg'), 'Войти через Google не получилось. Попробуйте ещё раз или войдите по паролю.');
+    }
 
     function switchTab(login) {
       document.getElementById('tabLogin').classList.toggle('active', login);
@@ -94,8 +119,11 @@
           email: document.getElementById('loginEmail').value,
           password: document.getElementById('loginPassword').value,
         });
-        // Админа ведём в админку, но не теряем вкладку, если ссылка вела на неё
-        location.href = r.is_admin ? (next.startsWith('/admin.html') ? next : '/admin.html') : next;
+        // Каждого ведём туда, где он работает: админа в админку, маркетолога
+        // в кабинет статистики, клиента — куда он шёл до входа
+        if (r.is_admin) location.href = next.startsWith('/admin.html') ? next : '/admin.html';
+        else if (r.role === 'marketer') location.href = next.startsWith('/marketing.html') ? next : '/marketing.html';
+        else location.href = next;
       } catch (err) { showMsg(msg, err.message); }
     };
 

@@ -114,6 +114,8 @@ async function renderHeader(active) {
     html += link('/cabinet.html', 'Мои заявки', 'cabinet');
     if (!me.is_admin) html += link('/chat.html', 'Чат 🔒', 'chat');
     if (me.is_admin) html += link('/admin.html', 'Админка', 'admin');
+    // Маркетолог заходит только в свой кабинет со статистикой
+    if (me.role === 'marketer' || me.is_admin) html += link('/marketing.html', 'Статистика', 'marketing');
     html += `<span class="muted small">${esc(me.email)}</span>`;
     html += `<button class="btn small" id="logoutBtn">Выйти</button>`;
   } else {

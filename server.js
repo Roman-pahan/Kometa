@@ -10,6 +10,7 @@ const { notifyAdmin, notifyAdminSafe, detectChatId, isConfigured: tgConfigured }
 const agent = require('./agent');
 const { buildClientRecap } = require('./order-recap');
 const tracking = require('./tracking');
+const googleAuth = require('./google-auth');
 
 const PORT = process.env.PORT || 3210;
 const app = express();
@@ -62,7 +63,7 @@ function getSessionUser(req) {
   const match = cookie.match(/(?:^|;\s*)sid=([a-f0-9]{64})/);
   if (!match) return null;
   return db.prepare(`
-    SELECT u.id, u.email, u.name, u.is_admin, u.verify_status FROM sessions s
+    SELECT u.id, u.email, u.name, u.is_admin, u.role, u.verify_status FROM sessions s
     JOIN users u ON u.id = s.user_id WHERE s.token = ?
   `).get(match[1]) || null;
 }
@@ -77,6 +78,17 @@ function requireAuth(req, res, next) {
 function requireAdmin(req, res, next) {
   const user = getSessionUser(req);
   if (!user || !user.is_admin) return res.status(403).json({ error: 'Только для администратора' });
+  req.user = user;
+  next();
+}
+
+// Статистику смотрит и администратор, и маркетолог. Больше маркетологу
+// ничего не открывается: ни заявки, ни клиенты, ни переписка.
+function requireStats(req, res, next) {
+  const user = getSessionUser(req);
+  if (!user || (!user.is_admin && user.role !== 'marketer')) {
+    return res.status(403).json({ error: 'Доступ только для администратора и маркетолога' });
+  }
   req.user = user;
   next();
 }
@@ -121,11 +133,13 @@ app.post('/api/register', (req, res) => {
 app.post('/api/login', (req, res) => {
   const { email, password } = req.body || {};
   const user = db.prepare('SELECT * FROM users WHERE email = ?').get(String(email || '').toLowerCase().trim());
-  if (!user || hashPassword(String(password || ''), user.pass_salt) !== user.pass_hash) {
+  // Пустой pass_hash — у аккаунта, заведённого через Google: паролем в него не войти
+  if (!user || !user.pass_hash || hashPassword(String(password || ''), user.pass_salt) !== user.pass_hash) {
     return res.status(400).json({ error: 'Неверный email или пароль' });
   }
   setSidCookie(req, res, createSession(user.id));
-  res.json({ ok: true, is_admin: !!user.is_admin });
+  // Роль нужна странице входа: маркетолога она ведёт в кабинет статистики
+  res.json({ ok: true, is_admin: !!user.is_admin, role: user.role || '' });
 });
 
 app.post('/api/logout', (req, res) => {
@@ -157,21 +171,24 @@ app.post('/api/track', (req, res) => {
   }
 });
 
-app.get('/api/admin/stats', requireAdmin, (req, res) => {
+app.get('/api/admin/stats', requireStats, (req, res) => {
   const { from = '', to = '', ref } = req.query || {};
+  const filter = ref === undefined ? null : ref;
   res.json({
-    summary: tracking.summary({ from, to, ref: ref === undefined ? null : ref }),
+    summary: tracking.summary({ from, to, ref: filter }),
     sources: tracking.sourceRows({ from, to }),
+    daily: tracking.dailyVisits({ from, to, ref: filter }),
     timezone: tracking.TZ_SHIFT,
+    role: req.user.is_admin ? 'admin' : req.user.role,
   });
 });
 
-app.get('/api/admin/stats/source/:ref', requireAdmin, (req, res) => {
+app.get('/api/admin/stats/source/:ref', requireStats, (req, res) => {
   const { from = '', to = '' } = req.query || {};
   res.json(tracking.sourceDetail(req.params.ref === 'direct' ? '' : req.params.ref, { from, to }));
 });
 
-app.get('/api/admin/sources', requireAdmin, (req, res) => {
+app.get('/api/admin/sources', requireStats, (req, res) => {
   res.json({ sources: db.prepare('SELECT * FROM ad_sources ORDER BY id DESC').all() });
 });
 
@@ -204,6 +221,126 @@ app.patch('/api/admin/sources/:id', requireAdmin, (req, res) => {
   const enabled = b.enabled === undefined ? source.enabled : (b.enabled ? 1 : 0);
   db.prepare(`UPDATE ad_sources SET title = ?, comment = ?, cost = ?, placed_on = ?, enabled = ? WHERE id = ?`)
     .run(title, comment, cost, placed, enabled, source.id);
+  res.json({ ok: true });
+});
+
+// ---------- Вход через Google ----------
+
+// Куда отправить человека после входа, в зависимости от его роли
+function homeFor(user, next = '/') {
+  if (user.is_admin) return '/admin.html';
+  if (user.role === 'marketer') return '/marketing.html';
+  return next && next.startsWith('/') ? next : '/';
+}
+
+app.get('/api/auth/google', (req, res) => {
+  const url = googleAuth.authorizeUrl(req, res, String(req.query.next || '/'));
+  if (!url) return res.status(503).send('Вход через Google не настроен');
+  res.redirect(url);
+});
+
+app.get('/api/auth/google/callback', async (req, res) => {
+  const fail = message => {
+    googleAuth.clearState(req, res);
+    console.error('[google] вход не удался:', message);
+    res.redirect('/auth.html?google_error=1');
+  };
+  const saved = googleAuth.readState(req, String(req.query.state || ''));
+  // Ответ без совпадающего состояния — не наш: возможно, подделка
+  if (!saved) return fail('состояние не совпало');
+  if (!req.query.code) return fail('Google не вернул код');
+
+  try {
+    const profile = await googleAuth.exchangeCode(req, String(req.query.code));
+    let user = db.prepare('SELECT id, email, name, is_admin, role FROM users WHERE email = ?').get(profile.email);
+    if (!user) {
+      // Новый человек заводится обычным клиентом, без пароля: он входит через Google
+      const salt = crypto.randomBytes(16).toString('hex');
+      const info = db.prepare(`INSERT INTO users (email, name, pass_hash, pass_salt) VALUES (?, ?, '', ?)`)
+        .run(profile.email, profile.name, salt);
+      user = { id: info.lastInsertRowid, email: profile.email, is_admin: 0, role: '' };
+    } else if (!user.name && profile.name) {
+      db.prepare('UPDATE users SET name = ? WHERE id = ?').run(profile.name, user.id);
+    }
+    googleAuth.clearState(req, res);
+    setSidCookie(req, res, createSession(user.id));
+    res.redirect(homeFor(user, saved.next));
+  } catch (e) {
+    fail(e.message);
+  }
+});
+
+// ---------- Сотрудники: маркетолог ----------
+
+// Приглашение действует неделю: человек ставит пароль сам, когда ему удобно
+const INVITE_TTL_MIN = 7 * 24 * 60;
+
+// Ссылка, по которой сотрудник задаёт себе пароль. Пароль придумывает он сам,
+// администратор его не видит и не передаёт.
+async function inviteToSetPassword(req, user, purpose) {
+  const token = crypto.randomBytes(32).toString('hex');
+  db.prepare(`INSERT INTO password_resets (token, user_id, expires_at)
+    VALUES (?, ?, datetime('now', '+${INVITE_TTL_MIN} minutes'))`).run(token, user.id);
+  const link = `${req.protocol}://${req.get('host')}/reset.html?token=${token}`;
+  // Ссылка пишется в лог: без настроенной почты её можно передать вручную
+  console.log(`[invite] ${purpose} для ${user.email}: ${link}`);
+  let mailed = false;
+  try {
+    await sendMail({
+      to: user.email,
+      subject: `Доступ к статистике — ${getSetting('site_name')}`,
+      text: `Вам открыт доступ к статистике сайта ${getSetting('site_name')}.\n`
+        + `Задайте пароль по ссылке (действует 7 дней): ${link}\n`
+        + `Логин — этот адрес почты.`,
+      html: `<p>Вам открыт доступ к статистике сайта <b>${getSetting('site_name')}</b>.</p>
+        <p><a href="${link}">Задать пароль</a> — ссылка действует 7 дней.</p>
+        <p>Логин — этот адрес почты.</p>`,
+    });
+    mailed = true;
+  } catch (e) {
+    console.error('[invite] письмо не ушло:', e.message);
+  }
+  return { link, mailed };
+}
+
+app.get('/api/admin/staff', requireAdmin, (req, res) => {
+  const staff = db.prepare(`SELECT id, email, name, role, created_at,
+    (pass_hash = '') AS password_pending FROM users WHERE role != '' ORDER BY id`).all();
+  res.json({ staff, mail_configured: mailConfigured() });
+});
+
+app.post('/api/admin/staff', requireAdmin, async (req, res) => {
+  const email = String(req.body?.email || '').toLowerCase().trim();
+  if (!/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ error: 'Укажите корректный email' });
+
+  let user = db.prepare('SELECT id, email, is_admin, role FROM users WHERE email = ?').get(email);
+  if (user && user.is_admin) return res.status(400).json({ error: 'Это администратор, роль менять не нужно' });
+  if (!user) {
+    // Учётка заводится без рабочего пароля: его задаст сам сотрудник по ссылке
+    const salt = crypto.randomBytes(16).toString('hex');
+    const info = db.prepare(`INSERT INTO users (email, name, pass_hash, pass_salt, role)
+      VALUES (?, '', '', ?, 'marketer')`).run(email, salt);
+    user = { id: info.lastInsertRowid, email };
+  } else {
+    db.prepare("UPDATE users SET role = 'marketer' WHERE id = ?").run(user.id);
+  }
+  const invite = await inviteToSetPassword(req, user, 'Приглашение маркетолога');
+  res.json({ ok: true, email, mailed: invite.mailed, link: invite.link });
+});
+
+app.post('/api/admin/staff/:id/invite', requireAdmin, async (req, res) => {
+  const user = db.prepare("SELECT id, email FROM users WHERE id = ? AND role != ''").get(Number(req.params.id));
+  if (!user) return res.status(404).json({ error: 'Сотрудник не найден' });
+  const invite = await inviteToSetPassword(req, user, 'Повторное приглашение');
+  res.json({ ok: true, mailed: invite.mailed, link: invite.link });
+});
+
+app.delete('/api/admin/staff/:id', requireAdmin, (req, res) => {
+  const user = db.prepare("SELECT id FROM users WHERE id = ? AND role != ''").get(Number(req.params.id));
+  if (!user) return res.status(404).json({ error: 'Сотрудник не найден' });
+  // Роль снимается, учётка и её данные остаются на месте
+  db.prepare("UPDATE users SET role = '' WHERE id = ?").run(user.id);
+  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id);
   res.json({ ok: true });
 });
 
@@ -275,7 +412,12 @@ app.post('/api/reset-password', (req, res) => {
 
 // Лёгкая версия для шапки: название и Telegram без списка направлений
 app.get('/api/site', (req, res) => {
-  res.json({ site_name: getSetting('site_name'), telegram: getSetting('telegram_username') });
+  res.json({
+    site_name: getSetting('site_name'),
+    telegram: getSetting('telegram_username'),
+    // Кнопка входа через Google показывается только когда ключи заведены
+    google_auth: googleAuth.isConfigured(),
+  });
 });
 
 app.get('/api/public', (req, res) => {
@@ -877,6 +1019,11 @@ app.get('/api/admin/settings', requireAdmin, (req, res) => {
     agent_url: getSetting('agent_url') || '',
     agent_token_set: !!(getSetting('agent_token') || ''),
     agent_configured: agent.isConfigured(),
+    // Секрет Google наружу не отдаётся — только признак, что он заполнен
+    google_client_id: getSetting('google_client_id') || '',
+    google_secret_set: !!(getSetting('google_client_secret') || ''),
+    google_configured: googleAuth.isConfigured(),
+    google_redirect_uri: googleAuth.redirectUri(req),
     rates: ratesInfo(),
   });
 });
@@ -894,6 +1041,9 @@ app.patch('/api/admin/settings', requireAdmin, (req, res) => {
   if (b.tg_chat_id !== undefined) setSetting('tg_chat_id', String(b.tg_chat_id).trim());
   if (b.agent_url !== undefined) setSetting('agent_url', String(b.agent_url).trim());
   if (b.agent_token) setSetting('agent_token', String(b.agent_token).trim());
+  if (b.google_client_id !== undefined) setSetting('google_client_id', String(b.google_client_id).trim());
+  // Пустое значение секрета не затирает сохранённый, как и у пароля почты
+  if (b.google_client_secret) setSetting('google_client_secret', String(b.google_client_secret).trim());
   res.json({ ok: true });
 });
 

@@ -210,6 +210,74 @@ test('фильтр по источнику и по периоду сужает �
   assert.equal(future.visits, 0, 'в будущем периоде посещений нет');
 });
 
+test('моменты переходов отдаются в UTC, без второго сдвига часового пояса', async () => {
+  const stats = await admin('/api/admin/stats');
+  const row = stats.data.sources.find(s => s.ref === 'ru_thailand');
+  const stamp = new Date(row.first_visit.replace(' ', 'T') + 'Z');
+  // Записи сделаны только что: расхождение с текущим временем не больше часа
+  const diffHours = Math.abs(Date.now() - stamp.getTime()) / 3600000;
+  assert.ok(diffHours < 1, `первый переход показан со сдвигом ${diffHours.toFixed(1)} ч`);
+});
+
+test('график по дням приходит вместе со сводкой', async () => {
+  const stats = await admin('/api/admin/stats');
+  assert.ok(Array.isArray(stats.data.daily) && stats.data.daily.length, 'дни для гистограммы должны быть');
+  const day = stats.data.daily.at(-1);
+  assert.match(day.day, /^\d{4}-\d{2}-\d{2}$/);
+  assert.ok(day.visits > 0);
+});
+
+test('маркетолог видит статистику и не видит остального', async () => {
+  // Администратор выдаёт доступ по почте
+  const invited = await admin('/api/admin/staff', {
+    method: 'POST', body: JSON.stringify({ email: 'marketer@example.invalid' }),
+  });
+  assert.equal(invited.status, 200);
+  assert.match(invited.data.link, /reset\.html\?token=[a-f0-9]{64}/, 'ссылка для установки пароля создаётся');
+
+  // До установки пароля войти нельзя
+  const early = visitor();
+  const noPassword = await early('/api/login', { method: 'POST', body: JSON.stringify({ email: 'marketer@example.invalid', password: '' }) });
+  assert.equal(noPassword.status, 400, 'учётка без пароля не пускает');
+
+  // Маркетолог сам задаёт пароль по ссылке из письма
+  const token = invited.data.link.split('token=')[1];
+  const own = visitor();
+  const password = crypto.randomBytes(12).toString('hex');
+  const set = await own('/api/reset-password', { method: 'POST', body: JSON.stringify({ token, password }) });
+  assert.equal(set.status, 200, 'пароль устанавливается по ссылке');
+
+  const login = await own('/api/login', { method: 'POST', body: JSON.stringify({ email: 'marketer@example.invalid', password }) });
+  assert.equal(login.status, 200);
+  assert.equal(login.data.role, 'marketer', 'вход возвращает роль, по ней страница ведёт в кабинет');
+
+  // Статистика открыта
+  const stats = await own('/api/admin/stats');
+  assert.equal(stats.status, 200);
+  assert.ok(stats.data.summary.visits > 0);
+
+  // Всё остальное закрыто
+  for (const url of ['/api/admin/orders', '/api/admin/clients', '/api/admin/verifications', '/api/admin/staff']) {
+    const res = await own(url);
+    assert.equal(res.status, 403, url + ' маркетологу недоступен');
+  }
+  // И заводить ссылки он тоже не может
+  const create = await own('/api/admin/sources', { method: 'POST', body: JSON.stringify({ ref: 'from_marketer', title: 'Не должно создаться' }) });
+  assert.equal(create.status, 403);
+});
+
+test('доступ маркетолога снимается вместе с сессиями', async () => {
+  const { staff } = (await admin('/api/admin/staff')).data;
+  const marketer = staff.find(s => s.email === 'marketer@example.invalid');
+  assert.ok(marketer, 'маркетолог есть в списке сотрудников');
+
+  const removed = await admin('/api/admin/staff/' + marketer.id, { method: 'DELETE' });
+  assert.equal(removed.status, 200);
+
+  const after = (await admin('/api/admin/staff')).data.staff;
+  assert.ok(!after.some(s => s.email === 'marketer@example.invalid'), 'роль снята');
+});
+
 test('API статистики закрыто от посторонних', async () => {
   // Сервер отвечает 403 «Только для администратора» — как и на остальные админские адреса
   for (const url of ['/api/admin/stats', '/api/admin/stats/source/ru_thailand', '/api/admin/sources']) {

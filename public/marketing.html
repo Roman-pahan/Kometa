@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Статистика — Kometa Exchange</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <meta name="theme-color" content="#080E22">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="site">
+    <div class="container inner">
+      <a class="logo" href="/"><img class="mark" src="/logo.svg" alt="" width="30" height="30"><span id="siteName">Kometa Exchange</span></a>
+      <nav class="main" id="nav"></nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="section">
+      <h2>Статистика рекламного трафика</h2>
+      <p class="muted small">Переходы по рекламным ссылкам Telegram-каналов, посещения и действия на сайте.</p>
+      <div class="mt" id="statsRoot"></div>
+    </section>
+  </main>
+
+  <script src="/common.js"></script>
+  <script src="/stats-ui.js"></script>
+  <script>
+    async function init() {
+      const me = await renderHeader('marketing');
+      // Кабинет открыт администратору и маркетологу, остальных отправляем на вход
+      if (!me || (!me.is_admin && me.role !== 'marketer')) {
+        location.href = '/auth.html?next=' + encodeURIComponent('/marketing.html');
+        return;
+      }
+      // Ссылки заводит администратор, маркетолог только смотрит цифры
+      const stats = initStats(document.getElementById('statsRoot'), { manage: false });
+      await stats.load();
+    }
+    init();
+  </script>
+</body>
+</html>

@@ -117,6 +117,8 @@ for (const sql of [
   "ALTER TABLE users ADD COLUMN phone TEXT DEFAULT ''",
   "ALTER TABLE users ADD COLUMN telegram TEXT DEFAULT ''",
   'ALTER TABLE users ADD COLUMN pubkey TEXT',
+  // Роль сотрудника: пусто — обычный клиент, marketer — доступ к статистике
+  "ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT ''",
   // Способ, которым клиент отправляет рубли: qr, tbank или bank
   "ALTER TABLE orders ADD COLUMN payment_channel TEXT DEFAULT ''",
   // Как клиент получает деньги: transfer, delivery или atm

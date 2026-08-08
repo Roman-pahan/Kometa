@@ -88,6 +88,15 @@ nav.main a.active { color: var(--text); font-weight: 600; }
 .btn.danger { background: transparent; border-color: var(--danger); color: var(--danger); }
 .btn.small { padding: 6px 12px; font-size: 13px; border-radius: 8px; }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
+/* Кнопка входа через Google: белая, как принято у самого Google */
+.btn.google { width: 100%; background: #fff; color: #1f1f1f; border-color: #dadce0; }
+.btn.google:hover { filter: none; background: #f3f5f9; }
+/* Разделитель «или по паролю» между Google-входом и обычной формой */
+.or-line {
+  display: flex; align-items: center; gap: 12px;
+  margin: 18px 0; color: var(--muted); font-size: 13px;
+}
+.or-line::before, .or-line::after { content: ''; flex: 1; height: 1px; background: var(--border); }
 
 /* Карточки */
 .card {
@@ -249,6 +258,7 @@ select.pair-select { font-size: 17px; letter-spacing: .06em; }
   background: linear-gradient(180deg, var(--accent-soft), var(--accent));
 }
 .chart-label { font-size: 10.5px; color: var(--muted); margin-top: 6px; white-space: nowrap; }
+.chart-count { font-size: 10.5px; color: var(--accent-soft); margin-bottom: 4px; min-height: 14px; }
 
 /* Таблицы */
 .table-wrap { overflow-x: auto; }

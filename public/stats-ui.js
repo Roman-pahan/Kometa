@@ -1,0 +1,296 @@
+// Экран статистики рекламного трафика.
+//
+// Один и тот же модуль рисует вкладку в админке и кабинет маркетолога:
+// разница только в праве заводить и править рекламные ссылки.
+// Все цифры приходят с сервера — здесь только отображение.
+
+function initStats(container, { manage = false } = {}) {
+  container.innerHTML = `
+    <div class="card">
+      <div class="flex" style="flex-wrap:wrap; gap:10px">
+        <button class="btn small" data-period="today">Сегодня</button>
+        <button class="btn small" data-period="yesterday">Вчера</button>
+        <button class="btn small" data-period="7">7 дней</button>
+        <button class="btn small" data-period="30">30 дней</button>
+        <button class="btn small" data-period="all">Всё время</button>
+        <span class="grow"></span>
+        <label class="muted small">с <input type="date" class="statsFrom" style="width:150px"></label>
+        <label class="muted small">по <input type="date" class="statsTo" style="width:150px"></label>
+        <select class="statsRef" style="width:auto; min-width:180px"></select>
+        <button class="btn small primary statsApply">Показать</button>
+        ${manage ? '<button class="btn small success newSourceBtn">Создать рекламную ссылку</button>' : ''}
+      </div>
+      <p class="muted small mt statsPeriodNote"></p>
+      <div class="stat-tiles mt statsTiles"></div>
+    </div>
+
+    <div class="card mt">
+      <div class="flex"><h2 style="font-size:18px">Посещения по дням</h2></div>
+      <div class="statsChart"></div>
+    </div>
+
+    <div class="card mt">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Канал</th><th>ref</th><th>Ссылка</th>
+              <th data-sort="visits">Посещений</th>
+              <th data-sort="visitors">Уникальных</th>
+              <th data-sort="repeat">Повторных</th>
+              <th data-sort="today">Сегодня</th>
+              <th data-sort="last7">7 дней</th>
+              <th data-sort="last30">30 дней</th>
+              <th data-sort="first_visit">Первый переход</th>
+              <th data-sort="last_visit">Последний</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody class="statsBody"></tbody>
+        </table>
+      </div>
+      <p class="muted mt statsEmpty" style="display:none">Переходов пока не было.</p>
+    </div>
+
+    <div class="card mt sourceDetail" style="display:none"></div>
+  `;
+
+  const $ = selector => container.querySelector(selector);
+  const $$ = selector => container.querySelectorAll(selector);
+
+  let data = { summary: null, sources: [], daily: [] };
+  let sort = { key: 'visits', desc: true };
+  let editing = null;
+
+  // Дата в местном времени в виде YYYY-MM-DD со сдвигом на нужное число дней
+  const localDate = (shiftDays = 0) => {
+    const d = new Date(Date.now() + shiftDays * 86400000);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+  const period = () => ({ from: $('.statsFrom').value, to: $('.statsTo').value });
+  const tile = (label, value) =>
+    `<div class="stat-tile"><div class="stat-value">${esc(String(value))}</div><div class="stat-label">${esc(label)}</div></div>`;
+
+  async function load() {
+    const { from, to } = period();
+    const ref = $('.statsRef').value;
+    const query = new URLSearchParams();
+    if (from) query.set('from', from);
+    if (to) query.set('to', to);
+    if (ref && ref !== '__all__') query.set('ref', ref === '__direct__' ? '' : ref);
+    data = await api('/api/admin/stats' + (query.toString() ? '?' + query : ''));
+    renderTiles();
+    renderChart();
+    renderTable();
+    renderRefFilter();
+    $('.statsPeriodNote').textContent = (from || to)
+      ? `Период: ${from || 'начало'} — ${to || 'сегодня'}`
+      : 'Период: за всё время';
+  }
+
+  function renderTiles() {
+    const s = data.summary;
+    $('.statsTiles').innerHTML = [
+      tile('Всего посещений', s.visits),
+      tile('Уникальных посетителей', s.visitors),
+      tile('Сегодня', s.today),
+      tile('За 7 дней', s.last7),
+      tile('За 30 дней', s.last30),
+      tile('По рекламным ссылкам', s.from_ads),
+      tile('Прямой трафик', s.direct),
+    ].join('');
+  }
+
+  // Гистограмма по дням: столбик на день, высота — доля от самого высокого дня
+  function renderChart() {
+    const days = data.daily || [];
+    if (!days.length) {
+      $('.statsChart').innerHTML = '<p class="muted small">За выбранный период переходов не было.</p>';
+      return;
+    }
+    const max = Math.max(...days.map(d => d.visits), 1);
+    $('.statsChart').innerHTML = `<div class="chart">${days.map(d => `
+      <div class="chart-col" title="${esc(d.day)}: ${d.visits} посещений, ${d.visitors} уникальных, ${d.telegram_clicks} переходов в Telegram">
+        <span class="chart-count">${d.visits || ''}</span>
+        <div class="chart-bar" style="height:${Math.round(d.visits / max * 100)}%"></div>
+        <span class="chart-label">${esc(d.day.slice(5))}</span>
+      </div>`).join('')}</div>`;
+  }
+
+  function renderRefFilter() {
+    const select = $('.statsRef');
+    const current = select.value || '__all__';
+    select.innerHTML = ['<option value="__all__">Все источники</option>', '<option value="__direct__">Прямой трафик</option>']
+      .concat(data.sources.filter(s => s.ref).map(s => `<option value="${esc(s.ref)}">${esc(s.title)} (${esc(s.ref)})</option>`))
+      .join('');
+    select.value = [...select.options].some(o => o.value === current) ? current : '__all__';
+  }
+
+  function renderTable() {
+    const rows = [...data.sources].sort((a, b) => {
+      const x = a[sort.key], y = b[sort.key];
+      const cmp = x == null ? -1 : y == null ? 1 : x > y ? 1 : x < y ? -1 : 0;
+      return sort.desc ? -cmp : cmp;
+    });
+    $('.statsEmpty').style.display = rows.length ? 'none' : 'block';
+    $('.statsBody').innerHTML = rows.map(r => `
+      <tr data-ref="${esc(r.ref)}">
+        <td>${esc(r.title)}${r.enabled ? '' : ' <span class="muted small">(выключен)</span>'}</td>
+        <td class="muted small">${esc(r.ref || '—')}</td>
+        <td class="muted small">${r.link ? `<button class="btn small copyLink" data-link="${esc(r.link)}">Скопировать</button>` : '—'}</td>
+        <td><b>${r.visits}</b></td>
+        <td>${r.visitors}</td>
+        <td>${r.repeat}</td>
+        <td>${r.today}</td>
+        <td>${r.last7}</td>
+        <td>${r.last30}</td>
+        <td class="muted small">${r.first_visit ? fmtDate(r.first_visit) : '—'}</td>
+        <td class="muted small">${r.last_visit ? fmtDate(r.last_visit) : '—'}</td>
+        <td>
+          <button class="btn small detailBtn">Подробно</button>
+          ${manage && r.known && r.ref ? '<button class="btn small editBtn">Изменить</button>' : ''}
+        </td>
+      </tr>
+    `).join('');
+
+    $$('.copyLink').forEach(btn => {
+      btn.onclick = async () => {
+        try { await navigator.clipboard.writeText(btn.dataset.link); btn.textContent = 'Скопировано'; }
+        catch (_) { prompt('Скопируйте ссылку', btn.dataset.link); }
+        setTimeout(() => { btn.textContent = 'Скопировать'; }, 1500);
+      };
+    });
+    $$('.detailBtn').forEach(btn => { btn.onclick = () => showDetail(btn.closest('tr').dataset.ref); });
+    $$('.editBtn').forEach(btn => { btn.onclick = () => openModal(btn.closest('tr').dataset.ref); });
+  }
+
+  function dailyChart(daily) {
+    if (!daily.length) return '<p class="muted small">Переходов за период не было.</p>';
+    const max = Math.max(...daily.map(d => d.visits), 1);
+    return `<div class="chart">${daily.map(d => `
+      <div class="chart-col" title="${esc(d.day)}: ${d.visits} посещений, ${d.visitors} уникальных">
+        <span class="chart-count">${d.visits || ''}</span>
+        <div class="chart-bar" style="height:${Math.round(d.visits / max * 100)}%"></div>
+        <span class="chart-label">${esc(d.day.slice(5))}</span>
+      </div>`).join('')}</div>`;
+  }
+
+  async function showDetail(ref) {
+    const { from, to } = period();
+    const query = new URLSearchParams();
+    if (from) query.set('from', from);
+    if (to) query.set('to', to);
+    const d = await api(`/api/admin/stats/source/${encodeURIComponent(ref || 'direct')}` + (query.toString() ? '?' + query : ''));
+    const box = $('.sourceDetail');
+    const money = value => value == null ? '—' : fmtAmount(value) + ' ₽';
+    box.style.display = 'block';
+    box.innerHTML = `
+      <div class="flex"><h2 style="font-size:18px">${esc(d.title)}${d.ref ? ` <span class="muted small">${esc(d.ref)}</span>` : ''}</h2>
+        <span class="grow"></span><button class="btn small closeDetail">Закрыть</button></div>
+      ${d.link ? `<p class="muted small">${esc(d.link)}</p>` : ''}
+      <div class="stat-tiles mt">
+        ${tile('Посещений', d.visits)}
+        ${tile('Уникальных', d.visitors)}
+        ${tile('Повторных', d.repeat)}
+        ${tile('Нажали обмен', d.exchange_clicks)}
+        ${tile('Ушли в Telegram', d.telegram_clicks)}
+        ${tile('Доля нажавших обмен', d.exchange_rate + '%')}
+        ${tile('Доля ушедших в Telegram', d.telegram_rate + '%')}
+        ${tile('Стоимость рекламы', money(d.cost))}
+        ${tile('Цена посетителя', money(d.cost_per_visitor))}
+        ${tile('Цена перехода в Telegram', money(d.cost_per_telegram))}
+      </div>
+      <h2 style="font-size:16px" class="mt">Посещения по дням</h2>
+      ${dailyChart(d.daily)}
+    `;
+    box.querySelector('.closeDetail').onclick = () => { box.style.display = 'none'; };
+    box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  // ---------- Создание и правка ссылок: только у администратора ----------
+  function modal() { return document.getElementById('sourceModal'); }
+
+  function openModal(ref) {
+    editing = null;
+    const box = modal();
+    hideMsg(document.getElementById('srcMsg'));
+    document.getElementById('srcEnabledRow').style.display = ref ? 'flex' : 'none';
+    if (ref) {
+      api('/api/admin/sources').then(({ sources }) => {
+        editing = sources.find(s => s.ref === ref) || null;
+        if (!editing) return;
+        document.getElementById('sourceModalTitle').textContent = 'Изменить источник';
+        document.getElementById('srcTitle').value = editing.title;
+        document.getElementById('srcRef').value = editing.ref;
+        document.getElementById('srcRef').disabled = true;
+        document.getElementById('srcComment').value = editing.comment || '';
+        document.getElementById('srcCost').value = editing.cost ?? '';
+        document.getElementById('srcPlaced').value = editing.placed_on || '';
+        document.getElementById('srcEnabled').checked = !!editing.enabled;
+        document.getElementById('srcLinkPreview').textContent = 'Ссылка: ' + `${location.origin}/?ref=${editing.ref}`;
+      });
+    } else {
+      document.getElementById('sourceModalTitle').textContent = 'Создать рекламную ссылку';
+      ['srcTitle', 'srcRef', 'srcComment', 'srcCost', 'srcPlaced'].forEach(id => { document.getElementById(id).value = ''; });
+      document.getElementById('srcRef').disabled = false;
+      document.getElementById('srcLinkPreview').textContent = '';
+    }
+    box.classList.add('open');
+  }
+
+  if (manage) {
+    $('.newSourceBtn').onclick = () => openModal(null);
+    document.getElementById('srcCancel').onclick = () => modal().classList.remove('open');
+    document.getElementById('srcRef').oninput = e => {
+      const value = e.target.value.trim().toLowerCase().replace(/[^a-z0-9_\-]/g, '');
+      document.getElementById('srcLinkPreview').textContent = value ? `Ссылка: ${location.origin}/?ref=${value}` : '';
+    };
+    document.getElementById('srcSave').onclick = async () => {
+      const msg = document.getElementById('srcMsg');
+      hideMsg(msg);
+      const payload = {
+        title: document.getElementById('srcTitle').value,
+        comment: document.getElementById('srcComment').value,
+        cost: document.getElementById('srcCost').value,
+        placed_on: document.getElementById('srcPlaced').value,
+      };
+      try {
+        if (editing) {
+          payload.enabled = document.getElementById('srcEnabled').checked;
+          await api('/api/admin/sources/' + editing.id, 'PATCH', payload);
+        } else {
+          payload.ref = document.getElementById('srcRef').value;
+          const created = await api('/api/admin/sources', 'POST', payload);
+          try { await navigator.clipboard.writeText(created.link); } catch (_) { /* скопирует вручную */ }
+        }
+        modal().classList.remove('open');
+        await load();
+      } catch (e) { showMsg(msg, e.message); }
+    };
+  }
+
+  $$('[data-period]').forEach(btn => {
+    btn.onclick = () => {
+      const kind = btn.dataset.period;
+      const from = $('.statsFrom'), to = $('.statsTo');
+      if (kind === 'today') { from.value = localDate(0); to.value = localDate(0); }
+      else if (kind === 'yesterday') { from.value = localDate(-1); to.value = localDate(-1); }
+      else if (kind === '7') { from.value = localDate(-6); to.value = localDate(0); }
+      else if (kind === '30') { from.value = localDate(-29); to.value = localDate(0); }
+      else { from.value = ''; to.value = ''; }
+      load().catch(e => alert(e.message));
+    };
+  });
+  $('.statsApply').onclick = () => load().catch(e => alert(e.message));
+  $('.statsRef').onchange = () => load().catch(e => alert(e.message));
+  $$('th[data-sort]').forEach(th => {
+    th.style.cursor = 'pointer';
+    th.onclick = () => {
+      const key = th.dataset.sort;
+      sort = { key, desc: sort.key === key ? !sort.desc : true };
+      renderTable();
+    };
+  });
+
+  return { load };
+}
