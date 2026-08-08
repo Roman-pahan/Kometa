@@ -136,6 +136,14 @@
             <button class="btn primary" id="saveSmtpBtn">Сохранить SMTP</button>
             <button class="btn" id="testMailBtn">✉️ Отправить тестовое письмо себе</button>
           </div>
+
+          <details class="mt">
+            <summary class="muted small" style="cursor:pointer">Заполнить одной вставкой</summary>
+            <p class="muted small mt">Вставьте сюда готовый блок настроек — поля выше заполнятся сами
+              и сразу сохранятся. Строки, которых нет в блоке, останутся как были.</p>
+            <textarea id="smtpPaste" rows="6" placeholder="SMTP_HOST=smtp-relay.brevo.com&#10;SMTP_PORT=587&#10;SMTP_USER=...@smtp-brevo.com&#10;SMTP_PASS=ключ&#10;SMTP_FROM=Kometa &lt;kometa_ex@proton.me&gt;"></textarea>
+            <button class="btn primary mt" id="applySmtpPasteBtn">Разобрать и сохранить</button>
+          </details>
         </div>
 
         <div class="card mt">
@@ -823,6 +831,28 @@
         showMsg(msg, 'Настройки почты сохранены', 'ok');
         loadSettings();
       } catch (e) { showMsg(msg, e.message); }
+    };
+
+    // Настройки почты вставляются одним блоком: строки вида КЛЮЧ=значение.
+    // Пароль никуда больше не копируется — он уходит прямо в сохранение.
+    document.getElementById('applySmtpPasteBtn').onclick = async () => {
+      const msg = document.getElementById('smtpMsg');
+      hideMsg(msg);
+      const fields = { SMTP_HOST: 'smtpHost', SMTP_PORT: 'smtpPort', SMTP_USER: 'smtpUser', SMTP_PASS: 'smtpPass', SMTP_FROM: 'smtpFrom' };
+      let filled = 0;
+      for (const line of document.getElementById('smtpPaste').value.split('\n')) {
+        const at = line.indexOf('=');
+        if (at < 0) continue;
+        const key = line.slice(0, at).trim().toUpperCase();
+        // Кавычки вокруг значения — привычка .env, здесь они не нужны
+        const value = line.slice(at + 1).trim().replace(/^["']|["']$/g, '');
+        if (!fields[key] || !value) continue;
+        document.getElementById(fields[key]).value = value;
+        filled++;
+      }
+      if (!filled) return showMsg(msg, 'Не нашёл ни одной строки вида SMTP_HOST=…');
+      document.getElementById('smtpPaste').value = '';
+      document.getElementById('saveSmtpBtn').click();
     };
 
     document.getElementById('testMailBtn').onclick = async () => {
