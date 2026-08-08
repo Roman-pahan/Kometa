@@ -134,9 +134,11 @@
           <div class="msg" id="smtpMsg"></div>
           <div class="flex">
             <button class="btn primary" id="saveSmtpBtn">Сохранить SMTP</button>
-            <button class="btn" id="testMailBtn">✉️ Отправить тестовое письмо себе</button>
+            <button class="btn" id="testMailBtn">✉️ Отправить тестовое письмо</button>
             <button class="btn" id="checkMailBtn">🔍 Проверить соединение</button>
           </div>
+          <label class="field mt" style="max-width:420px"><span>Кому слать проверку (пусто — на почту админа)</span>
+            <input id="testMailTo" placeholder="kometa_ex@proton.me"></label>
           <pre class="env-block mt" id="mailCheck" style="display:none"></pre>
 
           <details class="mt">
@@ -884,8 +886,8 @@
       const msg = document.getElementById('smtpMsg');
       hideMsg(msg);
       try {
-        await api('/api/admin/test-mail', 'POST', {});
-        showMsg(msg, 'Тестовое письмо отправлено на ' + (document.getElementById('smtpUser').value ? 'вашу почту администратора' : 'почту'), 'ok');
+        const r = await api('/api/admin/test-mail', 'POST', { to: document.getElementById('testMailTo').value });
+        showMsg(msg, 'Тестовое письмо отправлено на ' + r.to + ' — проверьте и папку «Спам»', 'ok');
       } catch (e) { showMsg(msg, e.message); }
     };
 

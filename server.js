@@ -1133,15 +1133,21 @@ app.get('/api/admin/mail-check', requireAdmin, async (req, res) => {
 });
 
 app.post('/api/admin/test-mail', requireAdmin, async (req, res) => {
+  // Адрес проверки задаётся вручную: почта админской учётки не всегда та,
+  // которую читают. Пустое поле — отправляем самому администратору.
+  const asked = String(req.body?.to || '').trim();
+  if (asked && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(asked)) {
+    return res.status(400).json({ error: 'Укажите корректный адрес получателя' });
+  }
   try {
     const r = await sendMail({
-      to: req.user.email,
+      to: asked || req.user.email,
       subject: `Проверка почты — ${getSetting('site_name')}`,
       text: 'Если вы читаете это письмо, SMTP настроен правильно.',
       html: '<p>Если вы читаете это письмо, SMTP настроен правильно.</p>',
     });
     if (!r.sent) return res.status(400).json({ error: 'SMTP не настроен — заполните хост, логин и пароль' });
-    res.json({ ok: true });
+    res.json({ ok: true, to: asked || req.user.email });
   } catch (e) {
     res.status(502).json({ error: 'Ошибка отправки: ' + e.message });
   }
