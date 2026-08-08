@@ -135,7 +135,9 @@
           <div class="flex">
             <button class="btn primary" id="saveSmtpBtn">Сохранить SMTP</button>
             <button class="btn" id="testMailBtn">✉️ Отправить тестовое письмо себе</button>
+            <button class="btn" id="checkMailBtn">🔍 Проверить соединение</button>
           </div>
+          <pre class="env-block mt" id="mailCheck" style="display:none"></pre>
 
           <details class="mt">
             <summary class="muted small" style="cursor:pointer">Заполнить одной вставкой</summary>
@@ -831,6 +833,29 @@
         showMsg(msg, 'Настройки почты сохранены', 'ok');
         loadSettings();
       } catch (e) { showMsg(msg, e.message); }
+    };
+
+    // Разбор проблем с почтой: показывает сохранённое и ответ сервера провайдера
+    document.getElementById('checkMailBtn').onclick = async () => {
+      const box = document.getElementById('mailCheck');
+      const msg = document.getElementById('smtpMsg');
+      hideMsg(msg);
+      box.style.display = 'block';
+      box.textContent = 'Проверяю…';
+      try {
+        const d = await api('/api/admin/mail-check');
+        box.textContent = [
+          `Сервер:   ${d.host || '—'}:${d.port || '—'}${d.secure ? ' (SSL)' : ' (STARTTLS)'}`,
+          `Логин:    ${d.user || '—'}`,
+          `Пароль:   ${d.pass_set ? d.pass_len + ' символов' : 'не задан'}` +
+            (d.pass_has_spaces ? '  ⚠ по краям пробелы — их надо убрать' : ''),
+          `От кого:  ${d.from || '—'}`,
+          '',
+          d.verify === 'ok' ? '✅ Сервер принял логин и пароль — отправка работает'
+            : d.verify === 'not_configured' ? '⚠️ Не заполнены хост или логин'
+            : `❌ Отказ: ${d.error || ''}${d.code ? ' [' + d.code + ']' : ''}`,
+        ].join('\n');
+      } catch (e) { box.textContent = 'Проверка не удалась: ' + e.message; }
     };
 
     // Настройки почты вставляются одним блоком: строки вида КЛЮЧ=значение.

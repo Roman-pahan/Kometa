@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const express = require('express');
 const { db, getSetting, setSetting, restoreDefaultDirections } = require('./db');
 const { refreshRates, startAutoRefresh, directionRate, ratesInfo, applyPushedBoard } = require('./rates');
-const { sendMail, isConfigured: mailConfigured } = require('./mailer');
+const { sendMail, isConfigured: mailConfigured, diagnose: mailDiagnose } = require('./mailer');
 const { encryptBuffer, decryptBuffer, sealData, verifySeal, hashBuffer } = require('./secure-store');
 const { notifyAdmin, notifyAdminSafe, detectChatId, isConfigured: tgConfigured } = require('./notifier');
 const agent = require('./agent');
@@ -1125,6 +1125,11 @@ app.post('/api/admin/telegram/test', requireAdmin, async (req, res) => {
   } catch (e) {
     res.status(502).json({ error: 'Ошибка Telegram: ' + e.message });
   }
+});
+
+// Разбор проблем с почтой: что сохранено и что отвечает сервер провайдера
+app.get('/api/admin/mail-check', requireAdmin, async (req, res) => {
+  res.json(await mailDiagnose());
 });
 
 app.post('/api/admin/test-mail', requireAdmin, async (req, res) => {

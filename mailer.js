@@ -38,4 +38,33 @@ async function sendMail({ to, subject, html, text }) {
   return { sent: true };
 }
 
-module.exports = { sendMail, isConfigured };
+// Проверка соединения с SMTP: показывает, что именно сохранено и что отвечает
+// сервер. Пароль наружу не отдаётся — только длина, чтобы поймать лишний пробел
+// или обрезанный при копировании ключ.
+async function diagnose() {
+  const cfg = smtpConfig();
+  const pass = getSetting('smtp_pass') || '';
+  const info = {
+    host: cfg ? cfg.host : null,
+    port: cfg ? cfg.port : Number(getSetting('smtp_port')) || null,
+    secure: cfg ? cfg.secure : null,
+    user: cfg ? cfg.auth.user : null,
+    from: cfg ? cfg.from : null,
+    pass_set: !!pass,
+    pass_len: pass.length,
+    // Пробелы по краям — частая причина отказа: их не видно в поле ввода
+    pass_has_spaces: pass !== pass.trim(),
+  };
+  if (!cfg) return { ...info, verify: 'not_configured' };
+  const transport = nodemailer.createTransport({
+    host: cfg.host, port: cfg.port, secure: cfg.secure, auth: cfg.auth, connectionTimeout: 10000,
+  });
+  try {
+    await transport.verify();
+    return { ...info, verify: 'ok' };
+  } catch (e) {
+    return { ...info, verify: 'failed', error: e.message, code: e.code || null };
+  }
+}
+
+module.exports = { sendMail, isConfigured, diagnose };
