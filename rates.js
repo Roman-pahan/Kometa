@@ -18,6 +18,10 @@ let marketMargins = null;   // { qr, tbank, global } — проценты, за�
 // Каждая цена помнит, когда её подтвердил оператор.
 let clientRates = null;
 
+// Цены по каналам оплаты: { RUB_THB: { qr: {rate, at}, tbank: …, bank: … } }.
+// Клиент присылает рубли одним из трёх способов, и каждый стоит по-своему.
+let channelRates = null;
+
 // Направления, где старая цена бессмысленна. Юань стол не котирует постоянно:
 // курс называется по запросу, и показывать вчерашний — обманывать клиента.
 const PERISHABLE_DIRECTIONS = ['RUB_CNY', 'USDT_CNY', 'CNY_RUB', 'CNY_USDT'];
@@ -37,6 +41,8 @@ try {
 try {
   const saved = getSetting('client_rates');
   if (saved) clientRates = JSON.parse(saved);
+  const savedChannels = getSetting('client_channel_rates');
+  if (savedChannels) channelRates = JSON.parse(savedChannels);
 } catch (_) { /* игнорируем битые данные */ }
 
 // Цены, присланные ботом, действуют и сразу после перезапуска: они не зависят
@@ -74,13 +80,34 @@ function mergeClientRates(fresh, receivedAt) {
   return merged;
 }
 
+// То же слияние для цен по каналам оплаты: канал, которого нет в новом наборе,
+// сохраняет прежнюю цену, а исчезнувшее направление — прежние каналы.
+function mergeChannelRates(fresh, receivedAt) {
+  const merged = { ...(channelRates || {}) };
+  for (const key of PERISHABLE_DIRECTIONS) delete merged[key];
+  for (const [direction, byChannel] of Object.entries(fresh || {})) {
+    const kept = { ...(merged[direction] || {}) };
+    for (const [channel, value] of Object.entries(byChannel || {})) {
+      const rate = Number(value);
+      if (Number.isFinite(rate) && rate > 0) kept[channel] = { rate, at: receivedAt };
+    }
+    merged[direction] = kept;
+  }
+  setSetting('client_channel_rates', JSON.stringify(merged));
+  return merged;
+}
+
 function applyPushedBoard() {
   const board = pushedBoard();
   if (!board) return false;
   // Цены клиенту приходят готовыми — сайт их не пересчитывает
+  const receivedAt = board.received_at || new Date().toISOString();
   clientRates = board.client && typeof board.client === 'object'
-    ? mergeClientRates(board.client, board.received_at || new Date().toISOString())
+    ? mergeClientRates(board.client, receivedAt)
     : clientRates;
+  channelRates = board.client_channels && typeof board.client_channels === 'object'
+    ? mergeChannelRates(board.client_channels, receivedAt)
+    : channelRates;
   if (baseRates) {
     if (board.usdt_thb) baseRates.THB = board.usdt_thb;
     if (board.rub_usdt) baseRates.RUB = board.rub_usdt;
@@ -190,10 +217,34 @@ function pushedRate(dir) {
 // Порядок один и тот же везде: ручной курс из админки, затем цена оператора.
 // Своего курса сайт не выдумывает: справочные курсы валют не имеют отношения
 // к тому, почём стол реально покупает и продаёт, и по ним легко уйти в минус.
-function directionRate(dir) {
+// Цены направления по каналам оплаты, если стол их различает.
+function directionChannels(dir) {
+  if (!channelRates) return null;
+  const saved = channelRates[`${dir.from_cur}_${dir.to_cur}`];
+  if (!saved) return null;
+  // Оставляем только каналы с пригодной ценой.
+  const usable = {};
+  for (const [channel, value] of Object.entries(saved)) {
+    const rate = Number(value && value.rate);
+    if (Number.isFinite(rate) && rate > 0) usable[channel] = { rate, at: value.at || null };
+  }
+  return Object.keys(usable).length ? usable : null;
+}
+
+// Итоговый курс направления. Канал оплаты, если он выбран и стол различает
+// каналы, задаёт свою цену: QR, Т-Банк и любой банк стоят по-разному.
+function directionRate(dir, channel) {
   const base = crossRate(dir.from_cur, dir.to_cur);
   if (dir.manual_rate != null && dir.manual_rate > 0) {
     return { rate: dir.manual_rate, source: 'manual', base, at: null };
+  }
+  const byChannel = directionChannels(dir);
+  if (channel && byChannel && byChannel[channel]) {
+    return { rate: byChannel[channel].rate, source: 'bot', base, at: byChannel[channel].at };
+  }
+  // Канал не подходит этому направлению — считать по чужой цене нельзя.
+  if (channel && byChannel) {
+    return { rate: null, source: 'channel_unavailable', base, at: null };
   }
   const pushed = pushedRate(dir);
   if (pushed) return { rate: pushed.rate, source: 'bot', base, at: pushed.at };
@@ -208,4 +259,4 @@ function ratesInfo() {
   return { updatedAt: at, hasRates: !!(clientRates || baseRates), market: marketInfo };
 }
 
-module.exports = { refreshRates, startAutoRefresh, directionRate, crossRate, ratesInfo, applyPushedBoard };
+module.exports = { refreshRates, startAutoRefresh, directionRate, directionChannels, crossRate, ratesInfo, applyPushedBoard };

@@ -3,7 +3,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const express = require('express');
 const { db, getSetting, setSetting, restoreDefaultDirections } = require('./db');
-const { refreshRates, startAutoRefresh, directionRate, ratesInfo, applyPushedBoard } = require('./rates');
+const { refreshRates, startAutoRefresh, directionRate, directionChannels, ratesInfo, applyPushedBoard } = require('./rates');
 const { sendMail, isConfigured: mailConfigured, diagnose: mailDiagnose } = require('./mailer');
 const { encryptBuffer, decryptBuffer, sealData, verifySeal, hashBuffer } = require('./secure-store');
 const { notifyAdmin, notifyAdminSafe, detectChatId, isConfigured: tgConfigured } = require('./notifier');
@@ -426,6 +426,9 @@ app.get('/api/public', (req, res) => {
   const dirs = db.prepare('SELECT * FROM directions WHERE enabled = 1 ORDER BY sort, id').all();
   const directions = dirs.map(d => {
     const { rate, source, at } = directionRate(d);
+    // Цены по каналам оплаты: у QR, Т-Банка и любого банка они разные,
+    // а через QR тезер не купить вовсе — такого канала там просто нет.
+    const byChannel = directionChannels(d);
     return {
       id: d.id, from_cur: d.from_cur, to_cur: d.to_cur, label: d.label,
       payment_note: d.payment_note, min_from: d.min_from, max_from: d.max_from,
@@ -435,6 +438,9 @@ app.get('/api/public', (req, res) => {
       on_request: source === 'on_request',
       // Когда оператор подтвердил именно этот курс
       rate_at: at || null,
+      channel_rates: byChannel
+        ? Object.fromEntries(Object.entries(byChannel).map(([key, value]) => [key, Number(value.rate.toFixed(8))]))
+        : null,
     };
   });
   res.json({
@@ -515,6 +521,12 @@ app.post('/api/orders', requireAuth, (req, res) => {
     channel = String(payment_channel || '').trim();
     const rules = PAYMENT_CHANNELS[channel];
     if (!rules) return res.status(400).json({ error: 'Выберите способ отправки рублей' });
+    // Не каждый способ подходит каждому направлению: через QR подрядчик
+    // выдаёт только баты, тезер этим путём не купить.
+    const byChannel = directionChannels(dir);
+    if (byChannel && !byChannel[channel]) {
+      return res.status(400).json({ error: `${rules.label}: этот способ по выбранному направлению недоступен` });
+    }
     if (rules.requires_verification) {
       const u = db.prepare('SELECT verify_status FROM users WHERE id = ?').get(req.user.id);
       if (u.verify_status !== 'approved') {
@@ -533,7 +545,8 @@ app.post('/api/orders', requireAuth, (req, res) => {
   if (dir.min_from && amount < dir.min_from) return res.status(400).json({ error: `Минимальная сумма: ${dir.min_from} ${dir.from_cur}` });
   if (dir.max_from && amount > dir.max_from) return res.status(400).json({ error: `Максимальная сумма: ${dir.max_from} ${dir.from_cur}` });
   if (!contact || !String(contact).trim()) return res.status(400).json({ error: 'Укажите контакт (Telegram)' });
-  const { rate, source } = directionRate(dir);
+  // Курс считается по выбранному способу отправки: у каждого он свой
+  const { rate, source } = directionRate(dir, channel || undefined);
   if (rate == null) {
     return res.status(503).json({
       error: source === 'on_request'

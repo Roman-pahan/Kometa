@@ -237,11 +237,16 @@
       });
     }
 
-    // Список способов отправки: QR исчезает, если клиент от него отказался
+    // Список способов отправки. QR исчезает, если клиент от него отказался,
+    // а также там, где стол этим путём не работает: тезер через QR не купить.
     function renderChannels() {
       const select = document.getElementById('channelSelect');
       const chosen = select.value;
-      const list = (PUB.payment_channels || []).filter(c => !(qrHidden && c.requires_verification));
+      const dir = currentDir();
+      const allowed = dir && dir.channel_rates ? Object.keys(dir.channel_rates) : null;
+      const list = (PUB.payment_channels || [])
+        .filter(c => !(qrHidden && c.requires_verification))
+        .filter(c => !allowed || allowed.includes(c.key));
       select.innerHTML = list.map(c => `<option value="${esc(c.key)}">${esc(c.label)}</option>`).join('');
       // Возвращаем прежний выбор, если он ещё в списке
       if (list.some(c => c.key === chosen)) select.value = chosen;
@@ -309,15 +314,36 @@
       document.getElementById('toCurLabel').textContent = cur(dir.to_cur);
       limits.textContent = (dir.min_from ? `Мин: ${fmtAmount(dir.min_from)} ${cur(dir.from_cur)}` : '') +
         (dir.max_from ? ` · Макс: ${fmtAmount(dir.max_from)} ${cur(dir.from_cur)}` : '');
-      if (dir.rate == null) {
+      // Курс зависит от способа отправки рублей: у QR, Т-Банка и любого
+      // банка он свой, поэтому берём цену выбранного канала
+      const channel = dir.from_cur === 'RUB' ? document.getElementById('channelSelect').value : '';
+      const rate = (dir.channel_rates && channel && dir.channel_rates[channel] != null)
+        ? dir.channel_rates[channel]
+        : dir.rate;
+      if (rate == null) {
         out.textContent = '—';
         rateLine.textContent = dir.on_request
           ? 'Курс по этому направлению называем в чате — напишите нам'
           : 'Курс временно недоступен';
         return;
       }
-      out.textContent = fmtAmount(amount * dir.rate);
-      rateLine.textContent = 'Курс: ' + rateText(dir);
+      out.textContent = fmtAmount(amount * rate);
+      rateLine.textContent = 'Курс: ' + rateText({ ...dir, rate });
+    }
+
+    // На карточке стоит цена направления. Когда способы отправки стоят
+    // по-разному, показываем вилку — иначе курс в расчёте будет удивлять.
+    function bestRateText(d) {
+      const values = d.channel_rates ? Object.values(d.channel_rates) : [];
+      if (values.length < 2 || new Set(values).size < 2) return rateText(d);
+      // Курс меньше единицы показывается перевёрнутым, вилка тоже
+      const inverted = d.rate != null && d.rate < 1;
+      const shown = inverted ? values.map(v => 1 / v) : values;
+      const from = fmtRate(Math.min(...shown));
+      const to = fmtRate(Math.max(...shown));
+      return inverted
+        ? `1 ${cur(d.to_cur)} = ${from}–${to} ${cur(d.from_cur)}`
+        : `1 ${cur(d.from_cur)} = ${from}–${to} ${cur(d.to_cur)}`;
     }
 
     function renderRates() {
@@ -325,7 +351,7 @@
       grid.innerHTML = PUB.directions.map(d => `
         <div class="rate-card" data-id="${d.id}">
           <div class="pair">${esc(d.label)}</div>
-          <div class="value">${esc(rateText(d))}</div>
+          <div class="value">${esc(bestRateText(d))}</div>
           <div class="note">${esc(d.payment_note)}</div>
         </div>
       `).join('');
@@ -362,7 +388,8 @@
       renderRates();
       recalc();
 
-      sel.onchange = recalc;
+      // Смена направления меняет и список способов: не каждый способ подходит
+      sel.onchange = () => { renderChannels(); recalc(); };
       document.getElementById('channelSelect').onchange = recalc;
       document.getElementById('amountFrom').oninput = recalc;
 

@@ -187,6 +187,35 @@ test('ручной курс из админки старше цены бота',
   assert.equal(dirOf((await json('/api/public')).data.directions, 'THB', 'RUB').rate, 2.91);
 });
 
+test('у каждого способа отправки свой курс, а тезер через QR не купить', async () => {
+  // Бот присылает цены по каналам вместе с лучшей ценой направления.
+  await json('/api/agent/rates', {
+    method: 'POST',
+    headers: { 'X-Agent-Token': AGENT_TOKEN },
+    body: JSON.stringify({
+      ...BOARD,
+      client_channels: {
+        // Баты можно купить всеми тремя способами
+        RUB_THB: { qr: 1 / 2.83, tbank: 1 / 2.85, bank: 1 / 2.88 },
+        // Тезер — только двумя: подрядчик QR выдаёт лишь баты
+        RUB_USDT: { tbank: 1 / 97.92, bank: 1 / 98.5 },
+      },
+    }),
+  });
+
+  const dirs = (await json('/api/public')).data.directions;
+  const thb = dirOf(dirs, 'RUB', 'THB');
+  // Все три способа приходят на витрину со своими ценами.
+  assert.deepEqual(Object.keys(thb.channel_rates).sort(), ['bank', 'qr', 'tbank']);
+  assert.equal(Number((1 / thb.channel_rates.qr).toFixed(2)), 2.83);
+  assert.equal(Number((1 / thb.channel_rates.bank).toFixed(2)), 2.88);
+
+  // В направлении на тезер способа qr нет вовсе.
+  const usdt = dirOf(dirs, 'RUB', 'USDT');
+  assert.deepEqual(Object.keys(usdt.channel_rates).sort(), ['bank', 'tbank']);
+  assert.equal(usdt.channel_rates.qr, undefined);
+});
+
 test('курс держится, пока бот не пришлёт новый, а юань живёт только свежим', async () => {
   // Сначала полный набор, вместе с юанем.
   const full = {
