@@ -574,6 +574,9 @@
             <span class="grow"></span>
             <span class="cur-rate" title="Текущий курс для клиента">1 ${esc(d.from_cur)} = <b>${finalRate}</b> ${esc(d.to_cur)}</span>
           </div>
+          <p class="hint">${d.rate_at
+            ? 'Курс подтверждён ' + new Date(d.rate_at).toLocaleString('ru-RU')
+            : (isManual ? 'Курс задан вручную' : 'Курса нет — на витрине «по запросу»')}</p>
 
           <div class="mode-row mt">
             <label class="mode ${!isManual ? 'active' : ''}">

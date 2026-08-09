@@ -187,6 +187,43 @@ test('ручной курс из админки старше цены бота',
   assert.equal(dirOf((await json('/api/public')).data.directions, 'THB', 'RUB').rate, 2.91);
 });
 
+test('курс держится, пока бот не пришлёт новый, а юань живёт только свежим', async () => {
+  // Сначала полный набор, вместе с юанем.
+  const full = {
+    usdt_thb: 33,
+    rub_usdt: 97,
+    client: { ...BOARD.client, USDT_CNY: 6.9 },
+  };
+  await json('/api/agent/rates', {
+    method: 'POST', body: JSON.stringify(full), headers: { 'X-Agent-Token': AGENT_TOKEN },
+  });
+  let dirs = (await json('/api/public')).data.directions;
+  assert.equal(dirOf(dirs, 'USDT', 'CNY').rate, 6.9);
+  // У каждой цены есть момент подтверждения.
+  assert.ok(dirOf(dirs, 'THB', 'RUB').rate_at, 'курс подписан временем');
+
+  // Следующая отправка потеряла часть курсов: биржа не ответила.
+  await json('/api/agent/rates', {
+    method: 'POST',
+    body: JSON.stringify({ usdt_thb: 33, rub_usdt: 97, client: { RUB_THB: 1 / 2.9 } }),
+    headers: { 'X-Agent-Token': AGENT_TOKEN },
+  });
+  dirs = (await json('/api/public')).data.directions;
+  // Новый курс встал.
+  assert.equal(Number((1 / dirOf(dirs, 'RUB', 'THB').rate).toFixed(2)), 2.9);
+  // Старые остались на витрине, а не пропали.
+  assert.equal(dirOf(dirs, 'THB', 'RUB').rate, 2.91);
+  assert.equal(dirOf(dirs, 'USDT', 'RUB').rate, 98);
+  // А юань исчез: его курс называют по запросу, вчерашний тут не годится.
+  assert.equal(dirOf(dirs, 'USDT', 'CNY').rate, null);
+  assert.equal(dirOf(dirs, 'USDT', 'CNY').on_request, true);
+
+  // Возвращаем прежнюю цену бата, чтобы следующий тест видел её.
+  await json('/api/agent/rates', {
+    method: 'POST', body: JSON.stringify(BOARD), headers: { 'X-Agent-Token': AGENT_TOKEN },
+  });
+});
+
 test('цена бота переживает перезапуск сайта', async () => {
   server.kill();
   await new Promise(resolve => server.on('exit', resolve));

@@ -425,7 +425,7 @@ app.get('/api/site', (req, res) => {
 app.get('/api/public', (req, res) => {
   const dirs = db.prepare('SELECT * FROM directions WHERE enabled = 1 ORDER BY sort, id').all();
   const directions = dirs.map(d => {
-    const { rate, source } = directionRate(d);
+    const { rate, source, at } = directionRate(d);
     return {
       id: d.id, from_cur: d.from_cur, to_cur: d.to_cur, label: d.label,
       payment_note: d.payment_note, min_from: d.min_from, max_from: d.max_from,
@@ -433,6 +433,8 @@ app.get('/api/public', (req, res) => {
       rate: rate != null ? Number(rate.toFixed(8)) : null,
       // Направление без цены не «сломано», а считается по запросу
       on_request: source === 'on_request',
+      // Когда оператор подтвердил именно этот курс
+      rate_at: at || null,
     };
   });
   res.json({
@@ -953,8 +955,8 @@ app.get('/api/admin/directions', requireAdmin, (req, res) => {
   const dirs = db.prepare('SELECT * FROM directions ORDER BY sort, id').all();
   res.json({
     directions: dirs.map(d => {
-      const { rate, source, base } = directionRate(d);
-      return { ...d, current_rate: rate, rate_source: source, base_rate: base };
+      const { rate, source, base, at } = directionRate(d);
+      return { ...d, current_rate: rate, rate_source: source, base_rate: base, rate_at: at || null };
     }),
     rates: ratesInfo(),
   });

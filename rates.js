@@ -14,8 +14,13 @@ let baseRates = null;   // { THB: 36.2, RUB: 79.5, CNY: 7.1, USD: 1, USDT: 1, ..
 let updatedAt = null;
 let marketInfo = { used: false, usdt_thb: null, rub_usdt: null, at: null, error: null };
 let marketMargins = null;   // { qr, tbank, global } — проценты, заданные в боте
-// Готовые цены клиенту по направлениям, присланные ботом: { RUB_THB: 0.369, ... }
+// Готовые цены клиенту по направлениям: { RUB_THB: { rate: 0.369, at: '…' } }.
+// Каждая цена помнит, когда её подтвердил оператор.
 let clientRates = null;
+
+// Направления, где старая цена бессмысленна. Юань стол не котирует постоянно:
+// курс называется по запросу, и показывать вчерашний — обманывать клиента.
+const PERISHABLE_DIRECTIONS = ['RUB_CNY', 'USDT_CNY', 'CNY_RUB', 'CNY_USDT'];
 
 // Восстановление после перезапуска
 try {
@@ -25,6 +30,13 @@ try {
     baseRates = parsed.rates;
     updatedAt = parsed.updatedAt;
   }
+} catch (_) { /* игнорируем битые данные */ }
+
+// Цены оператора переживают перезапуск: они хранятся отдельно от последнего
+// присланного набора, потому что накапливаются от отправки к отправке.
+try {
+  const saved = getSetting('client_rates');
+  if (saved) clientRates = JSON.parse(saved);
 } catch (_) { /* игнорируем битые данные */ }
 
 // Цены, присланные ботом, действуют и сразу после перезапуска: они не зависят
@@ -43,11 +55,32 @@ function pushedBoard() {
 
 // Курсы, присланные ботом, живут до следующей проверки оператора и не зависят
 // от того, доступен ли агент снаружи.
+// Слияние присланного набора с тем, что уже стоит на витрине.
+// Цена, которой в новом наборе нет, остаётся прежней: бот мог не достучаться
+// до биржи, и это не повод убирать направление. Исключение — юань: там курс
+// называется по запросу, и вчерашнее число только введёт клиента в заблуждение.
+function mergeClientRates(fresh, receivedAt) {
+  // Начинаем с того, что уже показывается.
+  const merged = { ...(clientRates || {}) };
+  // Скоропортящиеся направления живут только в текущем наборе.
+  for (const key of PERISHABLE_DIRECTIONS) delete merged[key];
+  // Записываем присланные цены вместе с моментом проверки.
+  for (const [key, value] of Object.entries(fresh || {})) {
+    const rate = Number(value);
+    if (Number.isFinite(rate) && rate > 0) merged[key] = { rate, at: receivedAt };
+  }
+  // Сохраняем, чтобы витрина пережила перезапуск сервера.
+  setSetting('client_rates', JSON.stringify(merged));
+  return merged;
+}
+
 function applyPushedBoard() {
   const board = pushedBoard();
   if (!board) return false;
   // Цены клиенту приходят готовыми — сайт их не пересчитывает
-  clientRates = board.client && typeof board.client === 'object' ? board.client : null;
+  clientRates = board.client && typeof board.client === 'object'
+    ? mergeClientRates(board.client, board.received_at || new Date().toISOString())
+    : clientRates;
   if (baseRates) {
     if (board.usdt_thb) baseRates.THB = board.usdt_thb;
     if (board.rub_usdt) baseRates.RUB = board.rub_usdt;
@@ -77,7 +110,8 @@ async function applyMarketRates(rates) {
     if (board.usdt_thb) rates.THB = board.usdt_thb;
     if (board.rub_usdt) rates.RUB = board.rub_usdt;
     if (board.cny_per_usdt) rates.CNY = board.cny_per_usdt;
-    clientRates = board.client && typeof board.client === 'object' ? board.client : null;
+    // Цены оператора здесь уже применены при получении набора, повторно их
+    // сливать не нужно: иначе у каждой сменится отметка времени.
     marketMargins = board.margins || null;
     marketInfo = {
       used: true, source: 'bot',
@@ -146,8 +180,10 @@ function crossRate(fromCur, toCur) {
 // для клиента, поэтому здесь ничего не пересчитывается.
 function pushedRate(dir) {
   if (!clientRates) return null;
-  const value = Number(clientRates[`${dir.from_cur}_${dir.to_cur}`]);
-  return Number.isFinite(value) && value > 0 ? value : null;
+  const saved = clientRates[`${dir.from_cur}_${dir.to_cur}`];
+  if (!saved) return null;
+  const value = Number(saved.rate);
+  return Number.isFinite(value) && value > 0 ? { rate: value, at: saved.at || null } : null;
 }
 
 // Итоговый курс направления.
@@ -157,12 +193,12 @@ function pushedRate(dir) {
 function directionRate(dir) {
   const base = crossRate(dir.from_cur, dir.to_cur);
   if (dir.manual_rate != null && dir.manual_rate > 0) {
-    return { rate: dir.manual_rate, source: 'manual', base };
+    return { rate: dir.manual_rate, source: 'manual', base, at: null };
   }
   const pushed = pushedRate(dir);
-  if (pushed != null) return { rate: pushed, source: 'bot', base };
+  if (pushed) return { rate: pushed.rate, source: 'bot', base, at: pushed.at };
   // Направление, которое стол не котирует, честно считается «по запросу»
-  return { rate: null, source: 'on_request', base };
+  return { rate: null, source: 'on_request', base, at: null };
 }
 
 function ratesInfo() {

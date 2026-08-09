@@ -22,6 +22,13 @@
       <p class="muted small">Переходы по рекламным ссылкам Telegram-каналов, посещения и действия на сайте.</p>
       <div class="mt" id="statsRoot"></div>
     </section>
+
+    <section class="section">
+      <h2>Курсы на витрине</h2>
+      <p class="muted small">Цены называет оператор в Telegram. Здесь видно, что стоит на сайте прямо сейчас
+        и когда каждый курс подтверждали.</p>
+      <div class="card mt" id="ratesRoot"></div>
+    </section>
   </main>
 
   <script src="/common.js"></script>
@@ -37,6 +44,8 @@
       // Ссылки заводит администратор, маркетолог только смотрит цифры
       const stats = initStats(document.getElementById('statsRoot'), { manage: false });
       await stats.load();
+      // Курсы витрины с датами подтверждения
+      renderRatesTable(document.getElementById('ratesRoot'));
     }
     init();
   </script>

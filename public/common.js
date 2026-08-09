@@ -81,6 +81,25 @@ function rateText(dir) {
   return `1 ${cur(dir.to_cur)} = ${fmtRate(1 / dir.rate)} ${cur(dir.from_cur)}`;
 }
 
+// Таблица курсов витрины с отметкой, когда каждый из них подтверждали.
+// Данные берутся с общедоступного адреса: показывается ровно то, что видит клиент.
+async function renderRatesTable(container) {
+  try {
+    const pub = await api('/api/public');
+    const rows = pub.directions.map(d => `
+      <tr>
+        <td>${esc(d.label)}</td>
+        <td>${esc(rateText(d))}</td>
+        <td class="muted small">${d.rate_at ? new Date(d.rate_at).toLocaleString('ru-RU') : '—'}</td>
+      </tr>`).join('');
+    container.innerHTML = `<div class="table-wrap"><table>
+      <thead><tr><th>Направление</th><th>Курс</th><th>Подтверждён</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
+  } catch (e) {
+    container.innerHTML = `<p class="muted small">Курсы не загрузились: ${esc(e.message)}</p>`;
+  }
+}
+
 function fmtDate(s) {
   // SQLite отдаёт UTC "YYYY-MM-DD HH:MM:SS"
   const d = new Date(s.replace(' ', 'T') + 'Z');
