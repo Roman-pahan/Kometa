@@ -308,6 +308,10 @@
       const out = document.getElementById('amountTo');
       const rateLine = document.getElementById('rateLine');
       const limits = document.getElementById('limitsLine');
+      // Список способов зависит от направления, а направление меняют и мимо
+      // выпадающего списка — щелчком по карточке курса. Поэтому пересобираем
+      // список здесь, а не только по onchange.
+      renderChannels();
       applyChannelRules();
       if (!dir) { out.textContent = '0'; return; }
       document.getElementById('fromCurLabel').textContent = cur(dir.from_cur);
@@ -388,8 +392,7 @@
       renderRates();
       recalc();
 
-      // Смена направления меняет и список способов: не каждый способ подходит
-      sel.onchange = () => { renderChannels(); recalc(); };
+      sel.onchange = recalc;
       document.getElementById('channelSelect').onchange = recalc;
       document.getElementById('amountFrom').oninput = recalc;
 
