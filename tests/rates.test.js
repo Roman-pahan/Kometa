@@ -167,6 +167,13 @@ test('сервер стирает только то, получение чего
   assert.equal((await asAdmin('/api/admin/settings')).data.purge_after_days, 7);
 });
 
+test('витрина знает, что юани продаются и за баты', async () => {
+  const { data } = await json('/api/public');
+  const dir = data.directions.find(d => d.from_cur === 'THB' && d.to_cur === 'CNY');
+  assert.ok(dir, 'направление ฿ → ¥ должно появиться само');
+  assert.equal(dir.label, '฿ → ¥');
+});
+
 test('без курса от бота сайт не называет цену сам', async () => {
   const { data } = await json('/api/public');
   for (const dir of data.directions) {
@@ -317,6 +324,11 @@ test('курс держится, пока бот не пришлёт новый,
   // А юань исчез: его курс называют по запросу, вчерашний тут не годится.
   assert.equal(dirOf(dirs, 'USDT', 'CNY').rate, null);
   assert.equal(dirOf(dirs, 'USDT', 'CNY').on_request, true);
+  // Это правило распространяется на все юаневые направления, включая новые.
+  for (const [from, to] of [['RUB', 'CNY'], ['THB', 'CNY']]) {
+    const dir = dirOf(dirs, from, to);
+    if (dir) assert.equal(dir.rate, null, `${from}→${to}: старый курс юаня не показываем`);
+  }
 
   // Возвращаем прежнюю цену бата, чтобы следующий тест видел её.
   await json('/api/agent/rates', {

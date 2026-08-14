@@ -161,6 +161,7 @@ const DEFAULT_DIRECTIONS = [
   { from_cur: 'USDT', to_cur: 'THB', label: '₮ → ฿', payment_note: '', markup_pct: 2, min_from: 30, max_from: 15000, sort: 60 },
   { from_cur: 'RUB', to_cur: 'CNY', label: '₽ → ¥', payment_note: '', markup_pct: 2.5, min_from: 3000, max_from: 1000000, sort: 70 },
   { from_cur: 'USDT', to_cur: 'CNY', label: '₮ → ¥', payment_note: '', markup_pct: 2.5, min_from: 30, max_from: 15000, sort: 80 },
+  { from_cur: 'THB', to_cur: 'CNY', label: '฿ → ¥', payment_note: '', markup_pct: 2.5, min_from: 1000, max_from: 500000, sort: 90 },
 ];
 
 // Добавляет отсутствующие стандартные направления (по паре валют), не трогая существующие.
@@ -201,6 +202,13 @@ for (const d of usdtRub) {
   if (!dirExists.get(d.from_cur, d.to_cur)) { insDir.run(d); addedDirs++; }
 }
 if (addedDirs) console.log(`[db] добавлены направления USDT↔RUB: ${addedDirs}`);
+
+// Миграция: юани стол продаёт и за баты тоже — направления раньше не было.
+const thbCny = DEFAULT_DIRECTIONS.find(d => d.from_cur === 'THB' && d.to_cur === 'CNY');
+if (thbCny && !dirExists.get('THB', 'CNY')) {
+  insDir.run(thbCny);
+  console.log('[db] добавлено направление ฿ → ¥');
+}
 
 // Миграция: в названиях направлений остаются только значки валют, а способы
 // оплаты с публичной страницы уходят — их клиент выясняет у оператора

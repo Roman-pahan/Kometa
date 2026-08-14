@@ -24,7 +24,7 @@ let channelRates = null;
 
 // Направления, где старая цена бессмысленна. Юань стол не котирует постоянно:
 // курс называется по запросу, и показывать вчерашний — обманывать клиента.
-const PERISHABLE_DIRECTIONS = ['RUB_CNY', 'USDT_CNY', 'CNY_RUB', 'CNY_USDT'];
+const PERISHABLE_DIRECTIONS = ['RUB_CNY', 'USDT_CNY', 'THB_CNY', 'CNY_RUB', 'CNY_USDT', 'CNY_THB'];
 
 // Восстановление после перезапуска
 try {
