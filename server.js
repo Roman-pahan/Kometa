@@ -1,5 +1,6 @@
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const crypto = require('crypto');
 const express = require('express');
 const { db, getSetting, setSetting, restoreDefaultDirections } = require('./db');
@@ -1060,6 +1061,9 @@ app.get('/api/admin/settings', requireAdmin, (req, res) => {
     google_secret_set: !!(getSetting('google_client_secret') || ''),
     google_configured: googleAuth.isConfigured(),
     google_redirect_uri: googleAuth.redirectUri(req),
+    // Пароль для выгрузки данных на компьютер владельца. Виден только ему —
+    // эндпоинт закрыт requireAdmin.
+    backup_token: getSetting('backup_token') || '',
     rates: ratesInfo(),
   });
 });
@@ -1081,6 +1085,64 @@ app.patch('/api/admin/settings', requireAdmin, (req, res) => {
   // Пустое значение секрета не затирает сохранённый, как и у пароля почты
   if (b.google_client_secret) setSetting('google_client_secret', String(b.google_client_secret).trim());
   res.json({ ok: true });
+});
+
+// ---------- Выгрузка данных на компьютер владельца ----------
+
+// Данные клиентов живут на сервере, но владелец хочет держать копию у себя.
+// Доступ по отдельному паролю, а не по входу в админку: скрипт выгрузки
+// работает по расписанию, и хранить ради него пароль от админки незачем.
+function requireBackupToken(req, res, next) {
+  const expected = (getSetting('backup_token') || '').trim();
+  if (!expected) return res.status(503).json({ error: 'Токен выгрузки не задан' });
+  const supplied = String(req.headers['x-backup-token'] || '').trim();
+  // Сравнение постоянного времени: длины приводим, чтобы timingSafeEqual не бросал
+  const ok = supplied.length === expected.length &&
+    crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));
+  if (!ok) return res.status(401).json({ error: 'Неверный токен' });
+  next();
+}
+
+// Снимок базы целиком. VACUUM INTO делает согласованную копию на ходу —
+// простое копирование файла во время записи дало бы битую базу.
+app.get('/api/admin/backup/db', requireBackupToken, (req, res) => {
+  const snapshot = path.join(os.tmpdir(), `kometa-backup-${crypto.randomBytes(6).toString('hex')}.db`);
+  try {
+    db.exec(`VACUUM INTO '${snapshot.replace(/'/g, "''")}'`);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', 'attachment; filename="exchange.db"');
+    const stream = fs.createReadStream(snapshot);
+    // Временный снимок удаляется в любом случае: и после отдачи, и при обрыве
+    const cleanup = () => { try { fs.unlinkSync(snapshot); } catch (_) {} };
+    stream.on('close', cleanup);
+    stream.on('error', cleanup);
+    stream.pipe(res);
+  } catch (e) {
+    try { fs.unlinkSync(snapshot); } catch (_) {}
+    res.status(500).json({ error: 'Не удалось снять копию базы: ' + e.message });
+  }
+});
+
+// Список вложений верификации. Файлы уже зашифрованы на диске и такими же
+// уезжают на компьютер: ключ лежит отдельно, в переменных сервера.
+app.get('/api/admin/backup/files', requireBackupToken, (req, res) => {
+  try {
+    const files = fs.readdirSync(uploadsDir).map(name => ({
+      name,
+      size: fs.statSync(path.join(uploadsDir, name)).size,
+    }));
+    res.json({ files });
+  } catch (e) {
+    res.status(500).json({ error: 'Не удалось прочитать вложения: ' + e.message });
+  }
+});
+
+app.get('/api/admin/backup/file/:name', requireBackupToken, (req, res) => {
+  // basename отрезает любые попытки выйти из папки вложений
+  const file = path.join(uploadsDir, path.basename(req.params.name));
+  if (!fs.existsSync(file)) return res.status(404).json({ error: 'Файл не найден' });
+  res.setHeader('Content-Type', 'application/octet-stream');
+  fs.createReadStream(file).pipe(res);
 });
 
 // Курсы, присланные ботом. Оператор проверяет курс в Telegram, бот отправляет

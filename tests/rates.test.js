@@ -96,6 +96,38 @@ after(() => {
   }
 });
 
+test('копия данных забирается только по своему паролю', async () => {
+  // Без пароля наружу не отдаётся ничего.
+  for (const url of ['/api/admin/backup/db', '/api/admin/backup/files']) {
+    const res = await request(url);
+    assert.equal(res.status, 401, url + ' без токена должен отказать');
+  }
+  // Чужой пароль тоже не подходит.
+  const settings = (await asAdmin('/api/admin/settings')).data;
+  const wrong = await request('/api/admin/backup/files', {
+    headers: { 'X-Backup-Token': 'x'.repeat(settings.backup_token.length) },
+  });
+  assert.equal(wrong.status, 401);
+
+  // Пароль создаётся сам и виден только администратору.
+  assert.match(settings.backup_token, /^[a-f0-9]{48}$/);
+  // Токен бота и токен выгрузки — разные пароли: у них разная цена ошибки.
+  assert.notEqual(settings.backup_token, AGENT_TOKEN);
+
+  const headers = { 'X-Backup-Token': settings.backup_token };
+  // Список вложений отдаётся.
+  const files = await json('/api/admin/backup/files', { headers });
+  assert.equal(files.status, 200);
+  assert.ok(Array.isArray(files.data.files));
+
+  // База отдаётся целиком и открывается как настоящая база SQLite.
+  const dump = await request('/api/admin/backup/db', { headers });
+  assert.equal(dump.status, 200);
+  const body = Buffer.from(await dump.arrayBuffer());
+  assert.ok(body.length > 1000, 'копия базы не может быть пустой');
+  assert.equal(body.subarray(0, 15).toString('latin1'), 'SQLite format 3');
+});
+
 test('без курса от бота сайт не называет цену сам', async () => {
   const { data } = await json('/api/public');
   for (const dir of data.directions) {

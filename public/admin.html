@@ -171,6 +171,20 @@
         </div>
 
         <div class="card mt">
+          <h2 style="font-size:18px">Копия данных на вашем компьютере</h2>
+          <p class="muted small mt">База со всеми заявками, клиентами и верификациями живёт на сервере.
+            Этот пароль позволяет забирать её копию к себе — скриптом, по расписанию, без входа в админку.
+            Пароль открывает доступ ко всем данным клиентов: держите его как ключ от сейфа.</p>
+          <pre class="env-block mt" id="backupToken"></pre>
+          <div class="flex">
+            <button class="btn primary" id="copyBackupBtn">📋 Скопировать</button>
+            <span class="hint" id="copyBackupHint"></span>
+          </div>
+          <p class="hint">Положите его в файл <code>scripts\backup-token.txt</code> в папке сайта,
+            затем запустите <code>scripts\backup.ps1</code>. Копии складываются в <code>C:\Kometa-backup</code>.</p>
+        </div>
+
+        <div class="card mt">
           <h2 style="font-size:18px">Бот оператора</h2>
           <p class="muted small mt" id="agentRatesStatus"></p>
           <p class="muted small">Цены на сайте называет бот: что проверили в Telegram — Т-Банк по стакану,
@@ -733,6 +747,8 @@
       document.getElementById('googleStatus').innerHTML = s.google_configured
         ? '✅ Вход через Google работает — кнопка видна на странице входа.'
         : '⚠️ Не настроен: кнопка «Войти через Google» скрыта.';
+      // Пароль выгрузки данных на компьютер владельца
+      document.getElementById('backupToken').textContent = s.backup_token || '';
       // Готовые строки для .env бота и время последней присылки курсов
       document.getElementById('agentEnv').textContent = s.agent_env || '';
       document.getElementById('agentRatesStatus').innerHTML = s.agent_rates_at
@@ -745,6 +761,20 @@
             : '✅ Агент подключён, но рыночные курсы ещё не применены. Нажмите «Обновить базовые курсы» во вкладке курсов.')
         : '⚠️ Агент не подключён: курсы берутся официальные, расчёт по заявкам не приходит.';
     }
+
+    document.getElementById('copyBackupBtn').onclick = async () => {
+      const hint = document.getElementById('copyBackupHint');
+      try {
+        await navigator.clipboard.writeText(document.getElementById('backupToken').textContent);
+        hint.textContent = 'Скопировано — вставьте в scripts\\backup-token.txt';
+      } catch (_) {
+        const range = document.createRange();
+        range.selectNodeContents(document.getElementById('backupToken'));
+        getSelection().removeAllRanges();
+        getSelection().addRange(range);
+        hint.textContent = 'Текст выделен — скопируйте сочетанием Ctrl+C';
+      }
+    };
 
     document.getElementById('copyEnvBtn').onclick = async () => {
       const hint = document.getElementById('copyEnvHint');
