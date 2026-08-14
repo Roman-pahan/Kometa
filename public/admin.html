@@ -617,7 +617,7 @@
           <div class="auto-block" style="display:${isManual ? 'none' : 'block'}">
             <!-- Наценка сайта больше не участвует в цене, но значение сохраняем как было -->
             <input class="f-markup" type="hidden" value="${d.markup_pct}">
-            <p class="hint mt">${d.rate_source === 'bot'
+            <p class="muted small mt">${d.rate_source === 'bot'
               ? 'Цену задаёт бот: маржа и каналы настраиваются в Telegram.'
               : 'Бот ещё не присылал цену по этому направлению — на сайте стоит «курс по запросу».'}</p>
             <div class="field mt" style="margin:0">
