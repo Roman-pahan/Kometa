@@ -182,6 +182,17 @@
           </div>
           <p class="hint">Положите его в файл <code>scripts\backup-token.txt</code> в папке сайта,
             затем запустите <code>scripts\backup.ps1</code>. Копии складываются в <code>C:\Kometa-backup</code>.</p>
+
+          <p class="muted small mt" id="backupStatus"></p>
+          <div class="flex" style="align-items:flex-end">
+            <label class="field" style="max-width:260px;margin:0"><span>Хранить на сервере, дней</span>
+              <input id="purgeDays" type="number" min="0" step="1"></label>
+            <button class="btn" id="savePurgeBtn">Сохранить</button>
+          </div>
+          <div class="msg" id="purgeMsg"></div>
+          <p class="hint">После подтверждения, что копия у вас, сервер убирает завершённые заявки старше
+            этого срока и фото уже проверенных верификаций. Заявки в работе и непроверенные фото
+            остаются на месте всегда — они нужны для работы.</p>
         </div>
 
         <div class="card mt">
@@ -749,6 +760,10 @@
         : '⚠️ Не настроен: кнопка «Войти через Google» скрыта.';
       // Пароль выгрузки данных на компьютер владельца
       document.getElementById('backupToken').textContent = s.backup_token || '';
+      document.getElementById('purgeDays').value = s.purge_after_days;
+      document.getElementById('backupStatus').innerHTML = s.backup_confirmed_at
+        ? `✅ Копия подтверждена: ${new Date(s.backup_confirmed_at).toLocaleString('ru-RU')}.`
+        : '⚠️ Копию ещё ни разу не забирали — данные существуют только на сервере.';
       // Готовые строки для .env бота и время последней присылки курсов
       document.getElementById('agentEnv').textContent = s.agent_env || '';
       document.getElementById('agentRatesStatus').innerHTML = s.agent_rates_at
@@ -761,6 +776,16 @@
             : '✅ Агент подключён, но рыночные курсы ещё не применены. Нажмите «Обновить базовые курсы» во вкладке курсов.')
         : '⚠️ Агент не подключён: курсы берутся официальные, расчёт по заявкам не приходит.';
     }
+
+    document.getElementById('savePurgeBtn').onclick = async () => {
+      const msg = document.getElementById('purgeMsg');
+      hideMsg(msg);
+      try {
+        await api('/api/admin/settings', 'PATCH', { purge_after_days: document.getElementById('purgeDays').value });
+        showMsg(msg, 'Срок хранения сохранён', 'ok');
+        loadSettings();
+      } catch (e) { showMsg(msg, e.message); }
+    };
 
     document.getElementById('copyBackupBtn').onclick = async () => {
       const hint = document.getElementById('copyBackupHint');

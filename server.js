@@ -1064,6 +1064,8 @@ app.get('/api/admin/settings', requireAdmin, (req, res) => {
     // Пароль для выгрузки данных на компьютер владельца. Виден только ему —
     // эндпоинт закрыт requireAdmin.
     backup_token: getSetting('backup_token') || '',
+    backup_confirmed_at: getSetting('backup_confirmed_at') || null,
+    purge_after_days: purgeAfterDays(),
     rates: ratesInfo(),
   });
 });
@@ -1081,6 +1083,12 @@ app.patch('/api/admin/settings', requireAdmin, (req, res) => {
   if (b.tg_chat_id !== undefined) setSetting('tg_chat_id', String(b.tg_chat_id).trim());
   if (b.agent_url !== undefined) setSetting('agent_url', String(b.agent_url).trim());
   if (b.agent_token) setSetting('agent_token', String(b.agent_token).trim());
+  // Через сколько дней завершённая заявка уходит с сервера после подтверждения
+  if (b.purge_after_days !== undefined) {
+    const days = Number(b.purge_after_days);
+    if (!Number.isFinite(days) || days < 0) return res.status(400).json({ error: 'Срок хранения — число дней, от нуля' });
+    setSetting('purge_after_days', String(Math.round(days)));
+  }
   if (b.google_client_id !== undefined) setSetting('google_client_id', String(b.google_client_id).trim());
   // Пустое значение секрета не затирает сохранённый, как и у пароля почты
   if (b.google_client_secret) setSetting('google_client_secret', String(b.google_client_secret).trim());
@@ -1103,13 +1111,24 @@ function requireBackupToken(req, res, next) {
   next();
 }
 
+// Сколько дней завершённая заявка ещё лежит на сервере после того, как её
+// копия подтверждена у владельца. Ноль означает «стирать сразу же».
+function purgeAfterDays() {
+  const value = Number(getSetting('purge_after_days'));
+  return Number.isFinite(value) && value >= 0 ? value : 30;
+}
+
 // Снимок базы целиком. VACUUM INTO делает согласованную копию на ходу —
 // простое копирование файла во время записи дало бы битую базу.
 app.get('/api/admin/backup/db', requireBackupToken, (req, res) => {
   const snapshot = path.join(os.tmpdir(), `kometa-backup-${crypto.randomBytes(6).toString('hex')}.db`);
   try {
+    // Момент снимка едет вместе с файлом: по нему потом определяется, что
+    // именно уже лежит у владельца и что можно стирать с сервера.
+    const takenAt = new Date().toISOString();
     db.exec(`VACUUM INTO '${snapshot.replace(/'/g, "''")}'`);
     res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('X-Snapshot-At', takenAt);
     res.setHeader('Content-Disposition', 'attachment; filename="exchange.db"');
     const stream = fs.createReadStream(snapshot);
     // Временный снимок удаляется в любом случае: и после отдачи, и при обрыве
@@ -1143,6 +1162,45 @@ app.get('/api/admin/backup/file/:name', requireBackupToken, (req, res) => {
   if (!fs.existsSync(file)) return res.status(404).json({ error: 'Файл не найден' });
   res.setHeader('Content-Type', 'application/octet-stream');
   fs.createReadStream(file).pipe(res);
+});
+
+// Подтверждение, что копия доехала. Только после него сервер что-либо стирает:
+// пока владелец не сказал «получил», данные лежат на месте, чем бы ни
+// закончилась выгрузка.
+app.post('/api/admin/backup/confirm', requireBackupToken, (req, res) => {
+  const snapshotAt = String(req.body?.snapshot_at || '').trim();
+  // Без момента снимка непонятно, что именно подтверждают.
+  if (!snapshotAt || Number.isNaN(Date.parse(snapshotAt))) {
+    return res.status(400).json({ error: 'Укажите snapshot_at из заголовка X-Snapshot-At' });
+  }
+  // Список файлов, которые владелец действительно забрал.
+  const received = new Set((Array.isArray(req.body?.files) ? req.body.files : []).map(name => path.basename(String(name))));
+  setSetting('backup_confirmed_at', snapshotAt);
+
+  // Фото верификации: стираем только те, по которым решение уже принято.
+  // Пока заявка на верификацию висит, фото нужно самому оператору.
+  const decided = db.prepare(`SELECT verify_passport, verify_selfie FROM users
+    WHERE verify_status IN ('approved', 'rejected')`).all();
+  let photos = 0;
+  for (const row of decided) {
+    for (const name of [row.verify_passport, row.verify_selfie]) {
+      if (!name || !received.has(path.basename(name))) continue;
+      const file = path.join(uploadsDir, path.basename(name));
+      if (!fs.existsSync(file)) continue;
+      try { fs.unlinkSync(file); photos++; } catch (_) { /* удалим в следующий раз */ }
+    }
+  }
+
+  // Заявки: только завершённые, только попавшие в подтверждённый снимок,
+  // и только те, что отлежали заданный срок. Заявка в работе не трогается.
+  const days = purgeAfterDays();
+  const purge = db.prepare(`DELETE FROM orders
+    WHERE status IN ('done', 'cancelled')
+      AND created_at <= ?
+      AND created_at <= datetime('now', ?)`);
+  const orders = purge.run(snapshotAt.replace('T', ' ').slice(0, 19), `-${days} days`).changes;
+
+  res.json({ ok: true, confirmed_at: snapshotAt, deleted_orders: orders, deleted_photos: photos, purge_after_days: days });
 });
 
 // Курсы, присланные ботом. Оператор проверяет курс в Telegram, бот отправляет

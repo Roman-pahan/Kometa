@@ -126,6 +126,45 @@ test('копия данных забирается только по своем�
   const body = Buffer.from(await dump.arrayBuffer());
   assert.ok(body.length > 1000, 'копия базы не может быть пустой');
   assert.equal(body.subarray(0, 15).toString('latin1'), 'SQLite format 3');
+  // Момент снимка едет вместе с файлом — по нему потом подтверждают получение
+  assert.ok(dump.headers.get('x-snapshot-at'), 'снимок должен быть подписан временем');
+});
+
+test('сервер стирает только то, получение чего подтвердили', async () => {
+  const settings = (await asAdmin('/api/admin/settings')).data;
+  const headers = { 'X-Backup-Token': settings.backup_token };
+
+  // Без момента снимка подтверждение не принимается: непонятно, что подтверждают.
+  const blind = await json('/api/admin/backup/confirm', {
+    method: 'POST', headers, body: JSON.stringify({ files: [] }),
+  });
+  assert.equal(blind.status, 400);
+
+  // Обычное подтверждение проходит и отчитывается, что убрано.
+  const dump = await request('/api/admin/backup/db', { headers });
+  await dump.arrayBuffer();
+  const snapshotAt = dump.headers.get('x-snapshot-at');
+  const done = await json('/api/admin/backup/confirm', {
+    method: 'POST', headers, body: JSON.stringify({ snapshot_at: snapshotAt, files: [] }),
+  });
+  assert.equal(done.status, 200);
+  assert.equal(typeof done.data.deleted_orders, 'number');
+  assert.equal(typeof done.data.deleted_photos, 'number');
+
+  // Момент последнего подтверждения виден администратору.
+  const after = (await asAdmin('/api/admin/settings')).data;
+  assert.equal(after.backup_confirmed_at, snapshotAt);
+
+  // Срок хранения настраивается и не принимает бессмыслицу.
+  const bad = await asAdmin('/api/admin/settings', {
+    method: 'PATCH', body: JSON.stringify({ purge_after_days: -5 }),
+  });
+  assert.equal(bad.status, 400);
+  const good = await asAdmin('/api/admin/settings', {
+    method: 'PATCH', body: JSON.stringify({ purge_after_days: 7 }),
+  });
+  assert.equal(good.status, 200);
+  assert.equal((await asAdmin('/api/admin/settings')).data.purge_after_days, 7);
 });
 
 test('без курса от бота сайт не называет цену сам', async () => {

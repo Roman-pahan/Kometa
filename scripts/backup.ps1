@@ -38,26 +38,43 @@ New-Item -ItemType Directory -Force -Path $uploads | Out-Null
 
 Write-Output "Забираю базу..."
 $dbPath = Join-Path $folder "exchange.db"
-Invoke-WebRequest -Uri "$SiteUrl/api/admin/backup/db" -Headers $headers -OutFile $dbPath -TimeoutSec 300
+$dbResponse = Invoke-WebRequest -Uri "$SiteUrl/api/admin/backup/db" -Headers $headers -OutFile $dbPath -TimeoutSec 300 -PassThru
+# Момент снимка: по нему сервер поймёт, что именно уже лежит здесь
+$snapshotAt = $dbResponse.Headers["X-Snapshot-At"]
+if ($snapshotAt -is [array]) { $snapshotAt = $snapshotAt[0] }
 $dbSize = [math]::Round((Get-Item $dbPath).Length / 1KB, 1)
 Write-Output "  база: $dbSize КБ"
 
 Write-Output "Забираю вложения..."
 $list = Invoke-RestMethod -Uri "$SiteUrl/api/admin/backup/files" -Headers $headers -TimeoutSec 60
-$count = 0
+$received = @()
 foreach ($file in $list.files) {
     $target = Join-Path $uploads $file.name
     Invoke-WebRequest -Uri "$SiteUrl/api/admin/backup/file/$($file.name)" -Headers $headers -OutFile $target -TimeoutSec 300
-    $count++
+    # В подтверждение попадает только то, что реально легло на диск нужного размера
+    if ((Test-Path $target) -and ((Get-Item $target).Length -eq $file.size)) { $received += $file.name }
 }
+$count = $received.Count
 Write-Output "  вложений: $count"
+
+# Говорим серверу, что копия на месте. Только после этого он что-то стирает —
+# оборвался скрипт, не дошли файлы, кончилось место: подтверждения нет, и на
+# сервере всё остаётся как было.
+Write-Output "Подтверждаю получение..."
+$confirmBody = @{ snapshot_at = $snapshotAt; files = $received } | ConvertTo-Json -Compress
+$confirm = Invoke-RestMethod -Uri "$SiteUrl/api/admin/backup/confirm" -Method Post `
+    -Headers ($headers + @{ "Content-Type" = "application/json" }) -Body $confirmBody -TimeoutSec 120
+Write-Output "  с сервера убрано: заявок $($confirm.deleted_orders), фото $($confirm.deleted_photos)"
 
 # Отметка о том, что копия снята целиком: если скрипт оборвался, файла не будет
 $report = [ordered]@{
-    snapshot_at = (Get-Date).ToString("o")
-    site        = $SiteUrl
-    db_bytes    = (Get-Item $dbPath).Length
-    files       = $count
+    snapshot_at     = $snapshotAt
+    pulled_at       = (Get-Date).ToString("o")
+    site            = $SiteUrl
+    db_bytes        = (Get-Item $dbPath).Length
+    files           = $count
+    deleted_orders  = $confirm.deleted_orders
+    deleted_photos  = $confirm.deleted_photos
 }
 $report | ConvertTo-Json | Set-Content -Path (Join-Path $folder "backup.json") -Encoding utf8
 
