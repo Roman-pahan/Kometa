@@ -178,9 +178,9 @@
           <pre class="env-block mt" id="backupToken"></pre>
           <div class="flex">
             <button class="btn primary" id="copyBackupBtn">📋 Скопировать</button>
-            <span class="hint" id="copyBackupHint"></span>
+            <span class="muted small" id="copyBackupHint"></span>
           </div>
-          <p class="hint">Положите его в файл <code>scripts\backup-token.txt</code> в папке сайта,
+          <p class="muted small">Положите его в файл <code>scripts\backup-token.txt</code> в папке сайта,
             затем запустите <code>scripts\backup.ps1</code>. Копии складываются в <code>C:\Kometa-backup</code>.</p>
 
           <p class="muted small mt" id="backupStatus"></p>
@@ -190,7 +190,7 @@
             <button class="btn" id="savePurgeBtn">Сохранить</button>
           </div>
           <div class="msg" id="purgeMsg"></div>
-          <p class="hint">После подтверждения, что копия у вас, сервер убирает завершённые заявки старше
+          <p class="muted small">После подтверждения, что копия у вас, сервер убирает завершённые заявки старше
             этого срока и фото уже проверенных верификаций. Заявки в работе и непроверенные фото
             остаются на месте всегда — они нужны для работы.</p>
         </div>
@@ -204,7 +204,7 @@
           <pre class="env-block mt" id="agentEnv"></pre>
           <div class="flex">
             <button class="btn primary" id="copyEnvBtn">📋 Скопировать</button>
-            <span class="hint" id="copyEnvHint"></span>
+            <span class="muted small" id="copyEnvHint"></span>
           </div>
 
           <details class="mt">
@@ -599,7 +599,7 @@
             <span class="grow"></span>
             <span class="cur-rate" title="Текущий курс для клиента">1 ${esc(d.from_cur)} = <b>${finalRate}</b> ${esc(d.to_cur)}</span>
           </div>
-          <p class="hint">${d.rate_at
+          <p class="muted small">${d.rate_at
             ? 'Курс подтверждён ' + new Date(d.rate_at).toLocaleString('ru-RU')
             : (isManual ? 'Курс задан вручную' : 'Курса нет — на витрине «по запросу»')}</p>
 
