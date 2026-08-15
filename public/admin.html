@@ -283,31 +283,6 @@
     </section>
   </main>
 
-  <!-- Создание и правка рекламной ссылки -->
-  <div class="modal" id="sourceModal" role="dialog" aria-modal="true" aria-labelledby="sourceModalTitle">
-    <div class="modal-card">
-      <h3 id="sourceModalTitle">Создать рекламную ссылку</h3>
-      <div class="grid2 mt">
-        <label class="field"><span>Название Telegram-канала *</span><input id="srcTitle" placeholder="Русские в Таиланде"></label>
-        <label class="field"><span>Значение ref *</span><input id="srcRef" placeholder="ru_thailand"></label>
-      </div>
-      <label class="field"><span>Комментарий</span><input id="srcComment" placeholder="Пост в канале, закреп на сутки"></label>
-      <div class="grid2">
-        <label class="field"><span>Стоимость рекламы, ₽</span><input id="srcCost" type="number" step="any" placeholder="необязательно"></label>
-        <label class="field"><span>Дата размещения</span><input id="srcPlaced" type="date"></label>
-      </div>
-      <label class="check" id="srcEnabledRow" style="display:none">
-        <input type="checkbox" id="srcEnabled" checked><span>Источник активен</span>
-      </label>
-      <p class="muted small" id="srcLinkPreview"></p>
-      <div class="msg" id="srcMsg"></div>
-      <div class="modal-actions">
-        <button class="btn" type="button" id="srcCancel">Отмена</button>
-        <button class="btn success" type="button" id="srcSave">Сохранить</button>
-      </div>
-    </div>
-  </div>
-
   <script src="/common.js"></script>
   <script src="/chat-crypto.js"></script>
   <script src="/stats-ui.js"></script>

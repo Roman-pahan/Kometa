@@ -263,9 +263,16 @@ test('маркетолог видит статистику и не видит о
     const res = await own(url);
     assert.equal(res.status, 403, url + ' маркетологу недоступен');
   }
-  // И заводить ссылки он тоже не может
-  const create = await own('/api/admin/sources', { method: 'POST', body: JSON.stringify({ ref: 'from_marketer', title: 'Не должно создаться' }) });
-  assert.equal(create.status, 403);
+  // А рекламным экраном он распоряжается наравне с владельцем: заводит ссылку,
+  // правит её и удаляет вместе со статистикой
+  const create = await own('/api/admin/sources', { method: 'POST', body: JSON.stringify({ ref: 'from_marketer', title: 'Ссылка маркетолога' }) });
+  assert.equal(create.status, 200, 'маркетолог заводит рекламные ссылки');
+
+  const edit = await own('/api/admin/sources/' + create.data.id, { method: 'PATCH', body: JSON.stringify({ title: 'Переименована' }) });
+  assert.equal(edit.status, 200, 'и правит их');
+
+  const drop = await own('/api/admin/sources/' + create.data.id, { method: 'DELETE' });
+  assert.equal(drop.status, 200, 'и удаляет их');
 });
 
 test('доступ маркетолога снимается вместе с сессиями', async () => {
@@ -356,7 +363,14 @@ test('ссылка удаляется вместе со своей статис�
   assert.equal(gone.status, 404, 'повторное удаление отвечает, что источника нет');
 });
 
-test('маркетолог удалять ссылки не может', async () => {
-  const res = await fetch(BASE + '/api/admin/sources/1', { method: 'DELETE', headers: { 'User-Agent': BROWSER } });
-  assert.equal(res.status, 403, 'без прав администратора удаление запрещено');
+test('посторонний ссылки не трогает', async () => {
+  // Ни входа, ни роли — рекламный экран закрыт целиком
+  for (const [method, url] of [['POST', '/api/admin/sources'], ['DELETE', '/api/admin/sources/1']]) {
+    const res = await fetch(BASE + url, {
+      method,
+      headers: { 'User-Agent': BROWSER, 'Content-Type': 'application/json' },
+      body: method === 'POST' ? JSON.stringify({ ref: 'chuzhoy', title: 'Чужая' }) : undefined,
+    });
+    assert.equal(res.status, 403, method + ' ' + url + ' закрыт для посторонних');
+  }
 });

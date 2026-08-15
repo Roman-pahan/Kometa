@@ -129,8 +129,12 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// Статистику смотрит и администратор, и маркетолог. Больше маркетологу
-// ничего не открывается: ни заявки, ни клиенты, ни переписка.
+// Рекламный экран целиком — общий для администратора и маркетолога: смотреть
+// цифры и заводить ссылки должен тот, кто размещает рекламу, иначе за каждой
+// новой ссылкой ему приходится идти к владельцу.
+//
+// Граница проходит по экрану, а не по действиям внутри него: заявки, клиенты,
+// верификации и переписка маркетологу по-прежнему закрыты.
 function requireStats(req, res, next) {
   const user = getSessionUser(req);
   if (!user || (!user.is_admin && user.role !== 'marketer')) {
@@ -304,7 +308,7 @@ app.get('/api/admin/sources', requireStats, (req, res) => {
   res.json({ sources: db.prepare('SELECT * FROM ad_sources ORDER BY id DESC').all() });
 });
 
-app.post('/api/admin/sources', requireAdmin, (req, res) => {
+app.post('/api/admin/sources', requireStats, (req, res) => {
   const b = req.body || {};
   const ref = tracking.cleanRef(b.ref);
   const title = String(b.title || '').trim();
@@ -320,7 +324,7 @@ app.post('/api/admin/sources', requireAdmin, (req, res) => {
   res.json({ ok: true, id: info.lastInsertRowid, ref, link: tracking.buildLink(ref) });
 });
 
-app.patch('/api/admin/sources/:id', requireAdmin, (req, res) => {
+app.patch('/api/admin/sources/:id', requireStats, (req, res) => {
   const b = req.body || {};
   const source = db.prepare('SELECT * FROM ad_sources WHERE id = ?').get(Number(req.params.id));
   if (!source) return res.status(404).json({ error: 'Источник не найден' });
@@ -342,7 +346,7 @@ app.patch('/api/admin/sources/:id', requireAdmin, (req, res) => {
 // продолжала бы висеть в таблице отдельной строкой, только уже без названия,
 // и разбираться в ней было бы ещё труднее. Это единственное место, где
 // статистика удаляется, и происходит это по прямой команде владельца.
-app.delete('/api/admin/sources/:id', requireAdmin, (req, res) => {
+app.delete('/api/admin/sources/:id', requireStats, (req, res) => {
   const source = db.prepare('SELECT * FROM ad_sources WHERE id = ?').get(Number(req.params.id));
   if (!source) return res.status(404).json({ error: 'Источник не найден' });
   // Одной транзакцией: ссылка без записей и записи без ссылки одинаково бесполезны

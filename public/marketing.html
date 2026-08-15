@@ -42,7 +42,9 @@
         return;
       }
       // Ссылки заводит администратор, маркетолог только смотрит цифры
-      const stats = initStats(document.getElementById('statsRoot'), { manage: false });
+      // Тот же экран и те же права, что у владельца: маркетолог заводит ссылки,
+      // правит и удаляет их сам
+      const stats = initStats(document.getElementById('statsRoot'), { manage: true });
       await stats.load();
       // Курсы витрины с датами подтверждения
       renderRatesTable(document.getElementById('ratesRoot'));
