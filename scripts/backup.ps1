@@ -45,6 +45,20 @@ if ($snapshotAt -is [array]) { $snapshotAt = $snapshotAt[0] }
 $dbSize = [math]::Round((Get-Item $dbPath).Length / 1KB, 1)
 Write-Output "  база: $dbSize КБ"
 
+# Проверяем, что скачался настоящий файл базы, а не обрывок и не страница с
+# ошибкой. Дальше идёт подтверждение, а его сервер понимает как разрешение
+# стирать у себя — подтверждать нечитаемую копию нельзя.
+$head = New-Object byte[] 16
+$stream = [System.IO.File]::OpenRead($dbPath)
+try { $null = $stream.Read($head, 0, 16) } finally { $stream.Close() }
+$magic = [System.Text.Encoding]::ASCII.GetString($head)
+if ($magic -ne "SQLite format 3`0") {
+    Write-Error "Скачанный файл не похож на базу SQLite. Копия оставлена в $folder, на сервере ничего не тронуто."
+}
+if ((Get-Item $dbPath).Length -lt 20KB) {
+    Write-Error "База подозрительно мала ($dbSize КБ). Копия оставлена в $folder, на сервере ничего не тронуто."
+}
+
 Write-Output "Забираю вложения..."
 $list = Invoke-RestMethod -Uri "$SiteUrl/api/admin/backup/files" -Headers $headers -TimeoutSec 60
 $received = @()
