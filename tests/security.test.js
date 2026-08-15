@@ -292,3 +292,87 @@ test('заявки и верификации удаляет только адм�
     assert.equal(res.status, 403, url + ' закрыт для посторонних');
   }
 });
+
+// Заводит клиента напрямую в базе: счётчик регистраций к этому месту исчерпан
+function makeClient() {
+  const { hashPasswordSync } = require('../security');
+  const email = `blok-${crypto.randomBytes(4).toString('hex')}@example.invalid`;
+  const password = crypto.randomBytes(12).toString('hex');
+  const salt = crypto.randomBytes(16).toString('hex');
+  const raw = new Database(DB_FILE);
+  const id = raw.prepare("INSERT INTO users (email, name, pass_hash, pass_salt) VALUES (?, '', ?, ?)")
+    .run(email, hashPasswordSync(password, salt), salt).lastInsertRowid;
+  raw.close();
+  return { id, email, password };
+}
+
+test('заблокированный клиент не входит и теряет открытые входы', async () => {
+  const client = makeClient();
+  const first = await json('/api/login', { method: 'POST', body: JSON.stringify(client) });
+  assert.equal(first.status, 200);
+  const cookie = (first.res.headers.getSetCookie?.() || []).map(c => c.split(';')[0]).join('; ');
+  assert.equal((await json('/api/me', { headers: { Cookie: cookie } })).data.user.email, client.email);
+
+  const blocked = await asAdmin('/api/admin/clients/' + client.id, { method: 'PATCH', body: JSON.stringify({ blocked: true }) });
+  assert.equal(blocked.status, 200, blocked.data.error);
+
+  // Открытый вход закрылся сразу
+  assert.equal((await json('/api/me', { headers: { Cookie: cookie } })).data.user, null);
+  // И заново не войти
+  const again = await json('/api/login', { method: 'POST', body: JSON.stringify(client) });
+  assert.equal(again.status, 403, 'вход закрытой учётки не проходит');
+  assert.match(again.data.error, /закрыт/i);
+
+  // Данные на месте, доступ возвращается
+  const listed = (await asAdmin('/api/admin/clients')).data.clients.find(c => c.id === client.id);
+  assert.equal(listed.blocked, 1, 'в списке видно, что доступ закрыт');
+  await asAdmin('/api/admin/clients/' + client.id, { method: 'PATCH', body: JSON.stringify({ blocked: false }) });
+  assert.equal((await json('/api/login', { method: 'POST', body: JSON.stringify(client) })).status, 200, 'после разблокировки входит');
+});
+
+test('удаление клиента уносит заявки, переписку и документы', async () => {
+  const client = makeClient();
+  const login = await json('/api/login', { method: 'POST', body: JSON.stringify(client) });
+  const cookie = (login.res.headers.getSetCookie?.() || []).map(c => c.split(';')[0]).join('; ');
+
+  const filesBefore = fs.readdirSync(UPLOADS_DIR).length;
+  await json('/api/verification', {
+    method: 'POST', headers: { Cookie: cookie },
+    body: JSON.stringify({ full_name: 'Удаляев Удал', phone: '+79007776655', telegram: 'udalyaev', passport: pngDataUrl(), selfie: pngDataUrl() }),
+  });
+  await json('/api/chat/messages', { method: 'POST', headers: { Cookie: cookie }, body: JSON.stringify({ iv: 'aaa', ciphertext: 'bbb' }) });
+
+  const raw = new Database(DB_FILE);
+  const dir = raw.prepare('SELECT id FROM directions LIMIT 1').get();
+  raw.prepare(`INSERT INTO orders (user_id, direction_id, amount_from, amount_to, rate, status, contact)
+    VALUES (?, ?, 1000, 10, 0.01, 'new', 'udal')`).run(client.id, dir.id);
+  raw.close();
+
+  assert.equal(fs.readdirSync(UPLOADS_DIR).length, filesBefore + 2, 'документы легли на диск');
+
+  const removed = await asAdmin('/api/admin/clients/' + client.id, { method: 'DELETE' });
+  assert.equal(removed.status, 200, removed.data.error);
+  assert.equal(removed.data.deleted_orders, 1);
+  assert.equal(removed.data.deleted_messages, 1);
+  assert.equal(removed.data.deleted_files, 2);
+  assert.equal(fs.readdirSync(UPLOADS_DIR).length, filesBefore, 'файлы стёрты с диска');
+
+  const check = new Database(DB_FILE, { readonly: true });
+  assert.equal(check.prepare('SELECT id FROM users WHERE id = ?').get(client.id), undefined, 'учётки нет');
+  assert.equal(check.prepare('SELECT COUNT(*) c FROM orders WHERE user_id = ?').get(client.id).c, 0);
+  assert.equal(check.prepare('SELECT COUNT(*) c FROM messages WHERE user_id = ?').get(client.id).c, 0);
+  assert.equal(check.prepare('SELECT COUNT(*) c FROM sessions WHERE user_id = ?').get(client.id).c, 0);
+  check.close();
+
+  assert.equal((await json('/api/login', { method: 'POST', body: JSON.stringify(client) })).status, 400, 'войти больше нечем');
+});
+
+test('администратора не заблокировать и не удалить', async () => {
+  const raw = new Database(DB_FILE, { readonly: true });
+  const admin = raw.prepare('SELECT id FROM users WHERE is_admin = 1').get();
+  raw.close();
+  const blocked = await asAdmin('/api/admin/clients/' + admin.id, { method: 'PATCH', body: JSON.stringify({ blocked: true }) });
+  assert.equal(blocked.status, 400);
+  const removed = await asAdmin('/api/admin/clients/' + admin.id, { method: 'DELETE' });
+  assert.equal(removed.status, 400);
+});

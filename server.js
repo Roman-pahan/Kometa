@@ -96,7 +96,7 @@ function getSessionUser(req) {
   const token = sessionCookieToken(req);
   if (!token) return null;
   const row = db.prepare(`
-    SELECT u.id, u.email, u.name, u.is_admin, u.role, u.verify_status, s.used_at FROM sessions s
+    SELECT u.id, u.email, u.name, u.is_admin, u.role, u.verify_status, u.blocked, s.used_at FROM sessions s
     JOIN users u ON u.id = s.user_id
     WHERE s.token = ? AND s.expires_at > datetime('now')
   `).get(token);
@@ -120,6 +120,9 @@ function sweepSessions() {
 function requireAuth(req, res, next) {
   const user = getSessionUser(req);
   if (!user) return res.status(401).json({ error: 'Требуется вход' });
+  // Отдельный ответ вместо «войдите заново»: человек должен понимать, что
+  // дело не в сессии и повторный вход ничего не изменит
+  if (user.blocked) return res.status(403).json({ error: 'Доступ к кабинету закрыт. Напишите нам в Telegram.' });
   req.user = user;
   next();
 }
@@ -236,6 +239,7 @@ app.post('/api/login', limitLoginByIp, limitLoginByEmail, async (req, res) => {
     // Пустой pass_hash — у аккаунта, заведённого через Google: паролем в него не войти
     const ok = user && user.pass_hash && await verifyPassword(String(password || ''), user.pass_salt, user.pass_hash);
     if (!ok) return res.status(400).json({ error: 'Неверный email или пароль' });
+    if (user.blocked) return res.status(403).json({ error: 'Доступ к кабинету закрыт. Напишите нам в Telegram.' });
     // Пароль подошёл — накопленные попытки больше ничего не значат
     resetLimit(`login-ip:${clientIp(req)}`);
     resetLimit(`login-email:${address}`);
@@ -985,7 +989,7 @@ app.get('/api/admin/verifications', requireAdmin, (req, res) => {
 
 app.get('/api/admin/clients', requireAdmin, (req, res) => {
   const clients = db.prepare(`
-    SELECT u.id, u.email, u.name, u.full_name, u.phone, u.telegram, u.verify_status, u.created_at,
+    SELECT u.id, u.email, u.name, u.full_name, u.phone, u.telegram, u.verify_status, u.blocked, u.created_at,
       COUNT(o.id) AS orders_count,
       (SELECT contact FROM orders WHERE user_id = u.id ORDER BY id DESC LIMIT 1) AS last_order_contact
     FROM users u LEFT JOIN orders o ON o.user_id = u.id
@@ -993,6 +997,51 @@ app.get('/api/admin/clients', requireAdmin, (req, res) => {
     GROUP BY u.id ORDER BY u.id DESC
   `).all();
   res.json({ clients });
+});
+
+// Закрыть или вернуть доступ клиенту. Учётка и вся её история остаются на
+// месте — меняется только возможность войти. Открытые входы закрываются сразу,
+// иначе уже вошедший продолжал бы работать до конца месяца.
+app.patch('/api/admin/clients/:id', requireAdmin, (req, res) => {
+  const user = db.prepare('SELECT id, email, is_admin FROM users WHERE id = ?').get(Number(req.params.id));
+  if (!user) return res.status(404).json({ error: 'Клиент не найден' });
+  if (user.is_admin) return res.status(400).json({ error: 'Администратора заблокировать нельзя' });
+  const blocked = req.body?.blocked ? 1 : 0;
+  db.prepare('UPDATE users SET blocked = ? WHERE id = ?').run(blocked, user.id);
+  if (blocked) db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id);
+  console.log(`[admin] клиент ${user.email}: доступ ${blocked ? "закрыт" : "открыт"}`);
+  res.json({ ok: true, id: user.id, blocked: !!blocked });
+});
+
+// Удаление клиента со всем, что за ним числится.
+//
+// Заявки, переписка и документы уходят вместе с учёткой: оставить их значило бы
+// хранить персональные данные человека, которого в системе уже нет. Файлы
+// стираются с диска отдельно — база про них знает только имена.
+app.delete('/api/admin/clients/:id', requireAdmin, (req, res) => {
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(Number(req.params.id));
+  if (!user) return res.status(404).json({ error: 'Клиент не найден' });
+  if (user.is_admin) return res.status(400).json({ error: 'Администратора удалить нельзя' });
+
+  // Сначала собираем имена файлов: после удаления строк их будет не найти
+  const files = [user.verify_passport, user.verify_selfie].filter(Boolean);
+  for (const row of db.prepare('SELECT attachment FROM orders WHERE user_id = ? AND attachment IS NOT NULL').all(user.id)) {
+    files.push(row.attachment);
+  }
+
+  const wipe = db.transaction(() => {
+    const orders = db.prepare('DELETE FROM orders WHERE user_id = ?').run(user.id).changes;
+    const messages = db.prepare('DELETE FROM messages WHERE user_id = ?').run(user.id).changes;
+    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id);
+    db.prepare('DELETE FROM password_resets WHERE user_id = ?').run(user.id);
+    db.prepare('DELETE FROM users WHERE id = ?').run(user.id);
+    return { orders, messages };
+  });
+  const removed = wipe();
+  for (const name of files) deleteUpload(name);
+
+  console.log(`[admin] удалён клиент ${user.email}: заявок ${removed.orders}, сообщений ${removed.messages}, файлов ${files.length}`);
+  res.json({ ok: true, email: user.email, deleted_orders: removed.orders, deleted_messages: removed.messages, deleted_files: files.length });
 });
 
 // Фото реквизитов из заявки: лежит зашифрованным, отдаётся только администратору

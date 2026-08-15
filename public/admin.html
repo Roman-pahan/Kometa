@@ -47,7 +47,7 @@
         <div class="table-wrap">
           <table>
             <thead>
-              <tr><th>№</th><th>Email</th><th>ФИО</th><th>Telegram</th><th>Телефон (банк)</th><th>Верификация</th><th>Заявок</th><th>Регистрация</th></tr>
+              <tr><th>№</th><th>Email</th><th>ФИО</th><th>Telegram</th><th>Телефон (банк)</th><th>Верификация</th><th>Заявок</th><th>Регистрация</th><th></th></tr>
             </thead>
             <tbody id="clientsBody"></tbody>
           </table>
@@ -404,17 +404,55 @@
         const tg = c.telegram || c.last_order_contact || '';
         const tgLink = tg ? `<a href="https://t.me/${esc(tg.replace(/^@/, ''))}" target="_blank" rel="noopener">@${esc(tg.replace(/^@/, ''))}</a>` : '<span class="muted">—</span>';
         return `
-        <tr>
+        <tr data-id="${c.id}">
           <td>${c.id}</td>
-          <td>${esc(c.email)}</td>
+          <td>${esc(c.email)}${c.blocked ? ' <span class="badge cancelled">Заблокирован</span>' : ''}</td>
           <td>${esc(c.full_name || c.name || '') || '<span class="muted">—</span>'}</td>
           <td>${tgLink}</td>
           <td>${esc(c.phone || '') || '<span class="muted">—</span>'}</td>
           <td><span class="badge ${VERIFY_BADGE[c.verify_status]}">${VERIFY_LABELS[c.verify_status]}</span></td>
           <td>${c.orders_count}</td>
           <td>${fmtDate(c.created_at)}</td>
+          <td style="white-space:nowrap">
+            <button class="btn small blockBtn">${c.blocked ? 'Разблокировать' : 'Заблокировать'}</button>
+            <button class="btn small danger deleteClientBtn">Удалить</button>
+          </td>
         </tr>`;
       }).join('');
+
+      document.querySelectorAll('#clientsBody tr').forEach(tr => {
+        const id = tr.dataset.id;
+        const client = clients.find(c => String(c.id) === String(id));
+
+        // Блокировка обратима, поэтому спрашиваем коротко
+        tr.querySelector('.blockBtn').onclick = async () => {
+          const closing = !client.blocked;
+          if (closing && !confirm(
+            `Закрыть доступ клиенту ${client.email}?\n\n` +
+            'Он не сможет войти в кабинет и оставлять заявки. Открытые входы закроются сразу.\n' +
+            'Данные и заявки останутся на месте, доступ можно вернуть этой же кнопкой.'
+          )) return;
+          try {
+            await api('/api/admin/clients/' + id, 'PATCH', { blocked: closing });
+            await loadClients();
+          } catch (e) { alert(e.message); }
+        };
+
+        // Удаление уносит всё, что за человеком числится — называем это поимённо
+        tr.querySelector('.deleteClientBtn').onclick = async () => {
+          if (!confirm(
+            `Удалить клиента ${client.email}?\n\n` +
+            `Вместе с учётной записью исчезнут его заявки (${client.orders_count}), переписка и документы верификации.\n` +
+            'Восстановить можно только из резервной копии на вашем компьютере.\n\n' +
+            'Если нужно просто закрыть доступ — нажмите «Заблокировать».'
+          )) return;
+          try {
+            const r = await api('/api/admin/clients/' + id, 'DELETE');
+            alert(`Клиент ${r.email} удалён. Заявок: ${r.deleted_orders}, сообщений: ${r.deleted_messages}, файлов: ${r.deleted_files}.`);
+            loadClients(); loadOrders(); loadVerifications();
+          } catch (e) { alert(e.message); }
+        };
+      });
     }
 
     // ---------- Верификация ----------

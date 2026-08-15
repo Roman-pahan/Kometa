@@ -142,6 +142,8 @@ for (const sql of [
   'ALTER TABLE sessions ADD COLUMN expires_at TEXT',
   // Когда сессией пользовались в последний раз: по нему срок продлевается
   'ALTER TABLE sessions ADD COLUMN used_at TEXT',
+  // Закрытый доступ: учётка остаётся со всей историей, но войти по ней нельзя
+  'ALTER TABLE users ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0',
 ]) {
   try { db.exec(sql); } catch (_) { /* колонка уже существует */ }
 }
