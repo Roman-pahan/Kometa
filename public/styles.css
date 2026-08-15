@@ -304,6 +304,10 @@ select.pair-select { font-size: 17px; letter-spacing: .06em; }
 .chart-xlabels { display: flex; gap: 10px; margin-top: 6px; }
 .chart-xlabel { width: var(--group-w); flex: none; font-size: 10.5px; color: var(--muted); text-align: center; white-space: nowrap; }
 
+/* Набор графиков: по одному на каждую рекламную ссылку */
+.ref-panel { padding: 14px 0; border-top: 1px solid var(--border); }
+.ref-panel:first-child { border-top: 0; padding-top: 4px; }
+
 /* Подсказка: значения всех трёх рядов за день */
 .chart-tip {
   position: absolute; z-index: 5; pointer-events: none; display: none;

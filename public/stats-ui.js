@@ -54,6 +54,14 @@ function initStats(container, { manage = false } = {}) {
       <p class="muted mt statsEmpty" style="display:none">Переходов пока не было.</p>
     </div>
 
+    <div class="card mt">
+      <div class="flex"><h2 style="font-size:18px">Переходы по каждой ссылке</h2>
+        <span class="grow"></span>
+        <button class="btn small refScale">Своя шкала у каждой</button></div>
+      <p class="muted small mt refScaleNote"></p>
+      <div class="refCharts mt"></div>
+    </div>
+
     <div class="card mt sourceDetail" style="display:none"></div>
   `;
 
@@ -83,6 +91,7 @@ function initStats(container, { manage = false } = {}) {
     data = await api('/api/admin/stats' + (query.toString() ? '?' + query : ''));
     renderTiles();
     renderChart();
+    renderRefCharts();
     renderTable();
     renderRefFilter();
     $('.statsPeriodNote').textContent = (from || to)
@@ -131,10 +140,10 @@ function initStats(container, { manage = false } = {}) {
       `<span class="chart-key"><i class="${series.keyCls}"></i>${series.label}</span>`).join('') + '</div>';
   }
 
-  function buildChart(days, emptyText) {
+  function buildChart(days, emptyText, options = {}) {
     if (!days.length) return `<p class="muted small">${emptyText}</p>`;
     const peak = Math.max(...days.flatMap(d => SERIES.map(s => num(d[s.key]))), 1);
-    const top = axisTop(peak);
+    const top = options.top || axisTop(peak);
     // Три линии сетки: ноль, середина и верх шкалы
     const ticks = [0, top / 2, top];
 
@@ -153,7 +162,7 @@ function initStats(container, { manage = false } = {}) {
 
     const labels = days.map(d => `<span class="chart-xlabel">${esc(d.day.slice(5))}</span>`).join('');
 
-    return `<div class="chart-wrap">${legend()}
+    return `<div class="chart-wrap">${options.legend === false ? '' : legend()}
       <div class="chart-plot">
         <div class="chart-axis">${axis}</div>
         <div class="chart-scroll"><div class="chart-canvas">
@@ -168,9 +177,12 @@ function initStats(container, { manage = false } = {}) {
 
   // Подсказка при наведении: день и все три значения сразу
   function wireChart(root) {
-    const wrap = root.querySelector('.chart-wrap');
-    if (!wrap) return;
+    root.querySelectorAll('.chart-wrap').forEach(wireOneChart);
+  }
+
+  function wireOneChart(wrap) {
     const tip = wrap.querySelector('.chart-tip');
+    if (!tip) return;
     wrap.querySelectorAll('.chart-group').forEach(group => {
       group.onmouseenter = () => {
         const values = group.dataset.values.split(',');
@@ -197,6 +209,65 @@ function initStats(container, { manage = false } = {}) {
       <tbody>${days.map(d => `<tr><td>${esc(d.day)}</td>${
         SERIES.map(s => `<td>${num(d[s.key])}</td>`).join('')}</tr>`).join('')}</tbody>
     </table></div>`;
+  }
+
+  // ---------- Отдельный график на каждую ссылку ----------
+  //
+  // Шкала по умолчанию общая на все ссылки: только тогда высоту столбиков
+  // можно сравнивать между каналами. Кнопка переключает на свою шкалу у
+  // каждой — так видно форму спроса у мелкого канала рядом с крупным.
+  let refChartsOwnScale = false;
+
+  function renderRefCharts() {
+    const box = $('.refCharts');
+    const rows = data.daily_by_ref || [];
+    if (!rows.length) {
+      box.innerHTML = '<p class="muted small">Переходов пока не было.</p>';
+      $('.refScaleNote').textContent = '';
+      return;
+    }
+
+    // Раскладываем строки по ссылкам
+    const byRef = new Map();
+    for (const row of rows) {
+      if (!byRef.has(row.ref)) byRef.set(row.ref, []);
+      byRef.get(row.ref).push(row);
+    }
+
+    // Название ссылки берём из таблицы источников, чтобы подписи совпадали
+    const titleOf = ref => {
+      const known = (data.sources || []).find(s => s.ref === ref);
+      if (known) return known.title;
+      return ref === '' ? 'Прямой трафик' : ref;
+    };
+
+    const panels = [...byRef.entries()].map(([ref, days]) => ({
+      ref, days,
+      total: days.reduce((sum, d) => sum + num(d.visits), 0),
+      visitors: days.reduce((sum, d) => sum + num(d.visitors), 0),
+      telegram: days.reduce((sum, d) => sum + num(d.telegram_clicks), 0),
+    })).sort((a, b) => b.total - a.total);
+
+    // Верх общей шкалы — по самому высокому дню среди всех ссылок
+    const peak = Math.max(...rows.flatMap(d => SERIES.map(s => num(d[s.key]))), 1);
+    const shared = axisTop(peak);
+
+    $('.refScaleNote').textContent = refChartsOwnScale
+      ? 'У каждой ссылки своя шкала: видно форму, но высоту столбиков между ссылками сравнивать нельзя.'
+      : 'Шкала общая для всех ссылок — высоту столбиков можно сравнивать между собой.';
+    $('.refScale').textContent = refChartsOwnScale ? 'Общая шкала' : 'Своя шкала у каждой';
+
+    box.innerHTML = legend() + panels.map(panel => `
+      <div class="ref-panel">
+        <div class="flex">
+          <b>${esc(titleOf(panel.ref))}</b>
+          <span class="muted small">${panel.ref ? esc(panel.ref) : 'без метки'}</span>
+          <span class="grow"></span>
+          <span class="muted small">посещений ${panel.total} · уникальных ${panel.visitors} · в Telegram ${panel.telegram}</span>
+        </div>
+        ${buildChart(panel.days, 'Переходов за период не было.', { legend: false, top: refChartsOwnScale ? null : shared })}
+      </div>`).join('');
+    wireChart(box);
   }
 
   let chartAsTable = false;
@@ -373,6 +444,7 @@ function initStats(container, { manage = false } = {}) {
   $('.statsApply').onclick = () => load().catch(e => alert(e.message));
   // Переключение график/таблица: те же цифры, разный способ смотреть
   $('.chartAsTable').onclick = () => { chartAsTable = !chartAsTable; renderChart(); };
+  $('.refScale').onclick = () => { refChartsOwnScale = !refChartsOwnScale; renderRefCharts(); };
   $('.statsRef').onchange = () => load().catch(e => alert(e.message));
   $$('th[data-sort]').forEach(th => {
     th.style.cursor = 'pointer';

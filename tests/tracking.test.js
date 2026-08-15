@@ -299,3 +299,29 @@ test('API статистики закрыто от посторонних', asyn
   const { sources } = (await admin('/api/admin/sources')).data;
   assert.ok(!sources.some(s => s.ref === 'hacker'), 'чужая ссылка не создана');
 });
+
+test('дни разложены по каждой ссылке отдельно', async () => {
+  // Два канала и прямой заход в один и тот же день
+  const first = visitor();
+  await first('/api/track', { method: 'POST', body: JSON.stringify({ ref: 'razbivka_a', event: 'visit', path: '/' }) });
+  await first('/api/track', { method: 'POST', body: JSON.stringify({ event: 'telegram_click', path: '/' }) });
+
+  const second = visitor();
+  await second('/api/track', { method: 'POST', body: JSON.stringify({ ref: 'razbivka_b', event: 'visit', path: '/' }) });
+
+  const { data } = await admin('/api/admin/stats');
+  assert.ok(Array.isArray(data.daily_by_ref), 'разбивка по ссылкам приходит с сервера');
+
+  const rowsOf = ref => data.daily_by_ref.filter(row => row.ref === ref);
+  const a = rowsOf('razbivka_a');
+  const b = rowsOf('razbivka_b');
+
+  assert.equal(a.length, 1, 'у первой ссылки один день');
+  assert.equal(a[0].visits, 1);
+  assert.equal(a[0].visitors, 1);
+  assert.equal(a[0].telegram_clicks, 1, 'переход в Telegram отнесён к своей ссылке');
+
+  assert.equal(b.length, 1, 'у второй ссылки свой день');
+  assert.equal(b[0].visits, 1);
+  assert.equal(b[0].telegram_clicks, 0, 'чужой переход во вторую ссылку не попал');
+});

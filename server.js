@@ -288,6 +288,8 @@ app.get('/api/admin/stats', requireStats, (req, res) => {
     summary: tracking.summary({ from, to, ref: filter }),
     sources: tracking.sourceRows({ from, to }),
     daily: tracking.dailyVisits({ from, to, ref: filter }),
+    // Те же дни, но разложенные по рекламным ссылкам: на каждую свой график
+    daily_by_ref: tracking.dailyByRef({ from, to }),
     timezone: tracking.TZ_SHIFT,
     role: req.user.is_admin ? 'admin' : req.user.role,
   });

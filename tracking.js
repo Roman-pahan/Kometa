@@ -178,6 +178,23 @@ function dailyVisits({ from = '', to = '', ref = null } = {}) {
   `).all(...period.params, ...refParams);
 }
 
+// Дни в разрезе каждой ссылки: из этого строится отдельная гистограмма на
+// источник. Один запрос на все ссылки сразу — по запросу на каждую было бы
+// столько обращений к базе, сколько заведено каналов.
+function dailyByRef({ from = '', to = '' } = {}) {
+  const period = periodWhere(from, to);
+  return db.prepare(`
+    SELECT ref,
+           date(created_at, '${TZ_SHIFT}') AS day,
+           SUM(CASE WHEN event = 'visit' THEN 1 ELSE 0 END) AS visits,
+           COUNT(DISTINCT CASE WHEN event = 'visit' THEN visitor END) AS visitors,
+           SUM(CASE WHEN event = 'telegram_click' THEN 1 ELSE 0 END) AS telegram_clicks
+    FROM visits
+    WHERE 1 = 1${period.sql}
+    GROUP BY ref, day ORDER BY ref, day
+  `).all(...period.params);
+}
+
 // Таблица источников: строка на каждый Telegram-канал плюс прямой трафик
 function sourceRows({ from = '', to = '' } = {}) {
   const period = periodWhere(from, to);
@@ -307,6 +324,7 @@ function buildLink(ref) {
 }
 
 module.exports = {
+  dailyByRef,
   recordEvent, summary, sourceRows, sourceDetail, dailyVisits, buildLink,
   cleanRef, isBot, hashIp,
   VISITOR_COOKIE, REF_COOKIE, EVENTS, TZ_SHIFT,
