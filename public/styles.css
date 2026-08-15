@@ -256,17 +256,64 @@ select.pair-select { font-size: 17px; letter-spacing: .06em; }
 }
 .stat-value { font-size: 24px; font-weight: 800; color: var(--accent-soft); line-height: 1.2; }
 .stat-label { font-size: 12.5px; color: var(--muted); margin-top: 4px; }
-.chart {
-  display: flex; align-items: flex-end; gap: 6px;
-  height: 180px; padding: 10px 0; overflow-x: auto;
+/* Тройная гистограмма по дням: посещения, уникальные, переходы в Telegram.
+   Цвета проверены на различимость при дальтонизме и на контраст к фону карточки —
+   фирменные синий с бирюзой для тёмной темы слишком светлы и сливаются. */
+.chart-wrap {
+  position: relative;
+  --series-visits: #497cfd; --series-visitors: #c54ebe; --series-telegram: #009f68;
+  /* Ширина группы задана здесь и от неё же берут ширину подписи дат:
+     иначе подписи уже столбиков и к концу месяца уезжают на чужой день */
+  --bar-w: 9px;
+  --group-w: calc(var(--bar-w) * 3 + 4px);
 }
-.chart-col { display: flex; flex-direction: column; justify-content: flex-end; align-items: center; height: 100%; min-width: 26px; }
+
+.chart-legend { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 10px; }
+/* Цвет носит метка рядом с текстом, а не сам текст: цветной текст на тёмном фоне читается плохо */
+.chart-key { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--muted); }
+.chart-key i { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.chart-key .k-visits { background: var(--series-visits); }
+.chart-key .k-visitors { background: var(--series-visitors); }
+.chart-key .k-telegram { background: var(--series-telegram); }
+
+.chart-plot { display: flex; align-items: stretch; }
+/* Подписи оси стоят вне прокрутки: при горизонтальной прокрутке они остаются на месте */
+.chart-axis { position: relative; width: 46px; flex: none; height: 180px; }
+.chart-axis span {
+  position: absolute; right: 8px; transform: translateY(-50%);
+  font-size: 10.5px; color: var(--muted); white-space: nowrap;
+}
+.chart-scroll { flex: 1; overflow-x: auto; padding-bottom: 2px; }
+/* Холст шириной по содержимому: линии сетки тянутся на всю прокручиваемую ширину, а не только на видимую */
+.chart-canvas { position: relative; min-width: 100%; width: max-content; }
+.chart-grid { position: absolute; left: 0; right: 0; top: 0; height: 180px; pointer-events: none; }
+.chart-gridline { position: absolute; left: 0; right: 0; border-top: 1px solid var(--border); }
+
+.chart-days { display: flex; align-items: flex-end; gap: 10px; height: 180px; position: relative; }
+/* Полосы в группе разделены зазором фона, а не обводкой: обводка добавляет чернил, которые не данные */
+.chart-group { display: flex; align-items: flex-end; gap: 2px; height: 100%; width: var(--group-w); flex: none; }
 .chart-bar {
-  width: 100%; border-radius: 4px 4px 0 0; min-height: 2px;
-  background: linear-gradient(180deg, var(--accent-soft), var(--accent));
+  width: var(--bar-w); min-height: 2px; align-self: flex-end;
+  border-radius: 4px 4px 0 0;
+  transition: filter .12s ease;
 }
-.chart-label { font-size: 10.5px; color: var(--muted); margin-top: 6px; white-space: nowrap; }
-.chart-count { font-size: 10.5px; color: var(--accent-soft); margin-bottom: 4px; min-height: 14px; }
+.chart-bar:hover { filter: brightness(1.3); }
+.chart-bar.s-visits { background: var(--series-visits); }
+.chart-bar.s-visitors { background: var(--series-visitors); }
+.chart-bar.s-telegram { background: var(--series-telegram); }
+.chart-xlabels { display: flex; gap: 10px; margin-top: 6px; }
+.chart-xlabel { width: var(--group-w); flex: none; font-size: 10.5px; color: var(--muted); text-align: center; white-space: nowrap; }
+
+/* Подсказка: значения всех трёх рядов за день */
+.chart-tip {
+  position: absolute; z-index: 5; pointer-events: none; display: none;
+  padding: 8px 10px; border-radius: 10px; font-size: 12px; line-height: 1.6;
+  background: var(--card2); border: 1px solid var(--border); color: var(--text);
+  box-shadow: 0 8px 24px rgba(0,0,0,.45); white-space: nowrap;
+}
+.chart-tip b { display: block; margin-bottom: 4px; }
+.chart-tip .chart-key { color: var(--text); gap: 6px; }
+.chart-tip .chart-key em { color: var(--muted); font-style: normal; }
 
 /* Таблицы */
 .table-wrap { overflow-x: auto; }

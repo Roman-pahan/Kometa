@@ -267,7 +267,8 @@ function sourceDetail(ref, { from = '', to = '' } = {}) {
   const daily = db.prepare(`
     SELECT date(created_at, '${TZ_SHIFT}') AS day,
            SUM(CASE WHEN event = 'visit' THEN 1 ELSE 0 END) AS visits,
-           COUNT(DISTINCT CASE WHEN event = 'visit' THEN visitor END) AS visitors
+           COUNT(DISTINCT CASE WHEN event = 'visit' THEN visitor END) AS visitors,
+           SUM(CASE WHEN event = 'telegram_click' THEN 1 ELSE 0 END) AS telegram_clicks
     FROM visits
     WHERE ref = ?${period.sql}
     GROUP BY day ORDER BY day

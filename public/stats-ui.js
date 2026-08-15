@@ -25,7 +25,9 @@ function initStats(container, { manage = false } = {}) {
     </div>
 
     <div class="card mt">
-      <div class="flex"><h2 style="font-size:18px">Посещения по дням</h2></div>
+      <div class="flex"><h2 style="font-size:18px">Посещения по дням</h2>
+        <span class="grow"></span>
+        <button class="btn small chartAsTable">Таблицей</button></div>
       <div class="statsChart"></div>
     </div>
 
@@ -101,20 +103,112 @@ function initStats(container, { manage = false } = {}) {
     ].join('');
   }
 
-  // Гистограмма по дням: столбик на день, высота — доля от самого высокого дня
+  // ---------- Гистограмма по дням ----------
+  //
+  // Три ряда на каждый день: всего посещений, уникальных посетителей и переходов
+  // в Telegram. Ряды стоят рядом, а не друг на друге: это не части одного целого,
+  // а вложенные величины — уникальных всегда не больше, чем посещений.
+  //
+  // Числа над столбиками намеренно не пишутся: на трёх рядах за месяц это сотня
+  // цифр, которые никто не читает. Значения даёт ось, наведение и вид таблицей.
+  const SERIES = [
+    { key: 'visits', cls: 's-visits', keyCls: 'k-visits', label: 'Всего посещений' },
+    { key: 'visitors', cls: 's-visitors', keyCls: 'k-visitors', label: 'Уникальных' },
+    { key: 'telegram_clicks', cls: 's-telegram', keyCls: 'k-telegram', label: 'Переходы в Telegram' },
+  ];
+
+  const num = value => Number(value) || 0;
+
+  // Верх шкалы округляется до круглого числа, чтобы подписи оси читались
+  function axisTop(peak) {
+    if (peak <= 4) return Math.max(peak, 1);
+    const step = Math.pow(10, Math.floor(Math.log10(peak)));
+    return Math.ceil(peak / (step / 2)) * (step / 2);
+  }
+
+  function legend() {
+    return '<div class="chart-legend">' + SERIES.map(series =>
+      `<span class="chart-key"><i class="${series.keyCls}"></i>${series.label}</span>`).join('') + '</div>';
+  }
+
+  function buildChart(days, emptyText) {
+    if (!days.length) return `<p class="muted small">${emptyText}</p>`;
+    const peak = Math.max(...days.flatMap(d => SERIES.map(s => num(d[s.key]))), 1);
+    const top = axisTop(peak);
+    // Три линии сетки: ноль, середина и верх шкалы
+    const ticks = [0, top / 2, top];
+
+    const axis = ticks.map(value =>
+      `<span style="bottom:${value / top * 100}%">${fmtAmount(value)}</span>`).join('');
+    const grid = ticks.map(value =>
+      `<div class="chart-gridline" style="bottom:${value / top * 100}%"></div>`).join('');
+
+    const columns = days.map(d => {
+      const values = SERIES.map(series => num(d[series.key]));
+      const bars = SERIES.map((series, i) =>
+        `<div class="chart-bar ${series.cls}" style="height:${values[i] / top * 100}%"></div>`).join('');
+      // Значения едут в data-атрибуте: подсказка собирается из них при наведении
+      return `<div class="chart-group" data-day="${esc(d.day)}" data-values="${values.join(',')}">${bars}</div>`;
+    }).join('');
+
+    const labels = days.map(d => `<span class="chart-xlabel">${esc(d.day.slice(5))}</span>`).join('');
+
+    return `<div class="chart-wrap">${legend()}
+      <div class="chart-plot">
+        <div class="chart-axis">${axis}</div>
+        <div class="chart-scroll"><div class="chart-canvas">
+          <div class="chart-grid">${grid}</div>
+          <div class="chart-days">${columns}</div>
+          <div class="chart-xlabels">${labels}</div>
+        </div></div>
+      </div>
+      <div class="chart-tip"></div>
+    </div>`;
+  }
+
+  // Подсказка при наведении: день и все три значения сразу
+  function wireChart(root) {
+    const wrap = root.querySelector('.chart-wrap');
+    if (!wrap) return;
+    const tip = wrap.querySelector('.chart-tip');
+    wrap.querySelectorAll('.chart-group').forEach(group => {
+      group.onmouseenter = () => {
+        const values = group.dataset.values.split(',');
+        tip.innerHTML = `<b>${esc(group.dataset.day)}</b>` + SERIES.map((series, i) =>
+          `<span class="chart-key"><i class="${series.keyCls}"></i><em>${series.label}:</em>&nbsp;${values[i]}</span><br>`).join('');
+        tip.style.display = 'block';
+      };
+      group.onmousemove = event => {
+        const box = wrap.getBoundingClientRect();
+        const left = event.clientX - box.left + 14;
+        // У правого края подсказка разворачивается влево, чтобы не уезжать за карточку
+        tip.style.left = Math.min(left, box.width - tip.offsetWidth - 8) + 'px';
+        tip.style.top = Math.max(0, event.clientY - box.top - tip.offsetHeight - 12) + 'px';
+      };
+      group.onmouseleave = () => { tip.style.display = 'none'; };
+    });
+  }
+
+  // Тот же набор цифр таблицей: график для взгляда, таблица для точности
+  function buildDailyTable(days) {
+    if (!days.length) return '<p class="muted small">За выбранный период переходов не было.</p>';
+    return `<div class="table-wrap"><table>
+      <thead><tr><th>День</th>${SERIES.map(s => `<th>${s.label}</th>`).join('')}</tr></thead>
+      <tbody>${days.map(d => `<tr><td>${esc(d.day)}</td>${
+        SERIES.map(s => `<td>${num(d[s.key])}</td>`).join('')}</tr>`).join('')}</tbody>
+    </table></div>`;
+  }
+
+  let chartAsTable = false;
+
   function renderChart() {
     const days = data.daily || [];
-    if (!days.length) {
-      $('.statsChart').innerHTML = '<p class="muted small">За выбранный период переходов не было.</p>';
-      return;
-    }
-    const max = Math.max(...days.map(d => d.visits), 1);
-    $('.statsChart').innerHTML = `<div class="chart">${days.map(d => `
-      <div class="chart-col" title="${esc(d.day)}: ${d.visits} посещений, ${d.visitors} уникальных, ${d.telegram_clicks} переходов в Telegram">
-        <span class="chart-count">${d.visits || ''}</span>
-        <div class="chart-bar" style="height:${Math.round(d.visits / max * 100)}%"></div>
-        <span class="chart-label">${esc(d.day.slice(5))}</span>
-      </div>`).join('')}</div>`;
+    const box = $('.statsChart');
+    box.innerHTML = chartAsTable
+      ? buildDailyTable(days)
+      : buildChart(days, 'За выбранный период переходов не было.');
+    if (!chartAsTable) wireChart(box);
+    $('.chartAsTable').textContent = chartAsTable ? 'Графиком' : 'Таблицей';
   }
 
   function renderRefFilter() {
@@ -165,14 +259,7 @@ function initStats(container, { manage = false } = {}) {
   }
 
   function dailyChart(daily) {
-    if (!daily.length) return '<p class="muted small">Переходов за период не было.</p>';
-    const max = Math.max(...daily.map(d => d.visits), 1);
-    return `<div class="chart">${daily.map(d => `
-      <div class="chart-col" title="${esc(d.day)}: ${d.visits} посещений, ${d.visitors} уникальных">
-        <span class="chart-count">${d.visits || ''}</span>
-        <div class="chart-bar" style="height:${Math.round(d.visits / max * 100)}%"></div>
-        <span class="chart-label">${esc(d.day.slice(5))}</span>
-      </div>`).join('')}</div>`;
+    return buildChart(daily, 'Переходов за период не было.');
   }
 
   async function showDetail(ref) {
@@ -203,6 +290,8 @@ function initStats(container, { manage = false } = {}) {
       <h2 style="font-size:16px" class="mt">Посещения по дням</h2>
       ${dailyChart(d.daily)}
     `;
+    // Подсказка нужна и здесь: график тот же, просто по одному источнику
+    wireChart(box);
     box.querySelector('.closeDetail').onclick = () => { box.style.display = 'none'; };
     box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
@@ -282,6 +371,8 @@ function initStats(container, { manage = false } = {}) {
     };
   });
   $('.statsApply').onclick = () => load().catch(e => alert(e.message));
+  // Переключение график/таблица: те же цифры, разный способ смотреть
+  $('.chartAsTable').onclick = () => { chartAsTable = !chartAsTable; renderChart(); };
   $('.statsRef').onchange = () => load().catch(e => alert(e.message));
   $$('th[data-sort]').forEach(th => {
     th.style.cursor = 'pointer';
