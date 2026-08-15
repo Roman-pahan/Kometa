@@ -376,3 +376,41 @@ test('администратора не заблокировать и не уд�
   const removed = await asAdmin('/api/admin/clients/' + admin.id, { method: 'DELETE' });
   assert.equal(removed.status, 400);
 });
+
+test('клиент убирает из кабинета свою отработавшую заявку, но не чужую и не рабочую', async () => {
+  const mine = makeClient();
+  const other = makeClient();
+  const login = await json('/api/login', { method: 'POST', body: JSON.stringify(mine) });
+  const cookie = (login.res.headers.getSetCookie?.() || []).map(c => c.split(';')[0]).join('; ');
+
+  const raw = new Database(DB_FILE);
+  const dir = raw.prepare('SELECT id FROM directions LIMIT 1').get();
+  const add = (userId, status) => raw.prepare(`INSERT INTO orders (user_id, direction_id, amount_from, amount_to, rate, status, contact)
+    VALUES (?, ?, 1000, 10, 0.01, ?, 'kabinet')`).run(userId, dir.id, status).lastInsertRowid;
+  const doneId = add(mine.id, 'done');
+  const workingId = add(mine.id, 'processing');
+  const strangerId = add(other.id, 'done');
+  raw.close();
+
+  const asMine = (url, options = {}) => json(url, { ...options, headers: { Cookie: cookie, ...(options.headers || {}) } });
+
+  // Заявка в работе не удаляется: по ней ещё ведут сделку
+  const working = await asMine('/api/orders/' + workingId, { method: 'DELETE' });
+  assert.equal(working.status, 400);
+  assert.match(working.data.error, /в работе/i);
+
+  // Чужая — как будто её не существует
+  const stranger = await asMine('/api/orders/' + strangerId, { method: 'DELETE' });
+  assert.equal(stranger.status, 404, 'чужая заявка недоступна даже для просмотра ошибки');
+
+  // Своя выполненная убирается
+  const done = await asMine('/api/orders/' + doneId, { method: 'DELETE' });
+  assert.equal(done.status, 200, done.data.error);
+
+  const left = (await asMine('/api/orders')).data.orders.map(o => o.id);
+  assert.deepEqual(left, [workingId], 'в кабинете осталась только рабочая заявка');
+
+  const check = new Database(DB_FILE, { readonly: true });
+  assert.ok(check.prepare('SELECT id FROM orders WHERE id = ?').get(strangerId), 'чужая заявка цела');
+  check.close();
+});

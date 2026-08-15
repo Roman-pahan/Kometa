@@ -79,7 +79,7 @@
         <div class="table-wrap">
           <table>
             <thead>
-              <tr><th>№</th><th>Дата</th><th>Направление</th><th>Отдаёте</th><th>Получаете</th><th>Курс</th><th>Статус</th><th>Комментарий оператора</th></tr>
+              <tr><th>№</th><th>Дата</th><th>Направление</th><th>Отдаёте</th><th>Получаете</th><th>Курс</th><th>Статус</th><th>Комментарий оператора</th><th></th></tr>
             </thead>
             <tbody id="ordersBody"></tbody>
           </table>
@@ -180,15 +180,17 @@
     };
 
     // ---------- Заявки ----------
-    async function init() {
-      const me = await renderHeader('cabinet');
-      if (!me) { location.href = '/auth.html?next=' + encodeURIComponent('/cabinet.html'); return; }
-      loadVerification();
+
+    // Убрать из кабинета можно только отработавшую заявку: пока сделка идёт,
+    // запись о ней нужна и оператору
+    const canDelete = o => ['done', 'cancelled'].includes(o.status);
+
+    async function loadOrders() {
       const { orders } = await api('/api/orders');
       const body = document.getElementById('ordersBody');
       document.getElementById('emptyNote').style.display = orders.length ? 'none' : 'block';
       body.innerHTML = orders.map(o => `
-        <tr>
+        <tr data-id="${o.id}">
           <td>${o.id}</td>
           <td>${fmtDate(o.created_at)}</td>
           <td>${esc(o.direction_label)}</td>
@@ -197,8 +199,27 @@
           <td>${fmtRate(o.rate)}</td>
           <td><span class="badge ${esc(o.status)}">${STATUS_LABELS[o.status] || esc(o.status)}</span></td>
           <td class="muted">${esc(o.admin_comment || '')}</td>
+          <td>${canDelete(o) ? '<button class="btn small danger deleteBtn">Удалить</button>' : ''}</td>
         </tr>
       `).join('');
+
+      body.querySelectorAll('.deleteBtn').forEach(btn => {
+        btn.onclick = async () => {
+          const id = btn.closest('tr').dataset.id;
+          if (!confirm(`Убрать заявку №${id} из истории?\n\nОна исчезнет из вашего кабинета. Отменить это нельзя.`)) return;
+          try {
+            await api('/api/orders/' + id, 'DELETE');
+            await loadOrders();
+          } catch (e) { alert(e.message); }
+        };
+      });
+    }
+
+    async function init() {
+      const me = await renderHeader('cabinet');
+      if (!me) { location.href = '/auth.html?next=' + encodeURIComponent('/cabinet.html'); return; }
+      loadVerification();
+      await loadOrders();
     }
     init();
   </script>

@@ -860,6 +860,26 @@ app.get('/api/orders', requireAuth, (req, res) => {
   });
 });
 
+// Клиент убирает из своего кабинета отработавшую заявку.
+//
+// Только выполненные и отменённые: пока заявка в работе, она нужна не столько
+// клиенту, сколько оператору — по ней сверяют реквизиты и ведут сделку. Дать
+// стирать её на ходу значило бы разрешить убрать запись о деньгах, которые
+// уже отправлены.
+const CLIENT_DELETABLE = ['done', 'cancelled'];
+
+app.delete('/api/orders/:id', requireAuth, (req, res) => {
+  const order = db.prepare('SELECT * FROM orders WHERE id = ? AND user_id = ?').get(Number(req.params.id), req.user.id);
+  if (!order) return res.status(404).json({ error: 'Заявка не найдена' });
+  if (!CLIENT_DELETABLE.includes(order.status)) {
+    return res.status(400).json({ error: 'Убрать можно только выполненную или отменённую заявку. Эта ещё в работе — напишите нам в Telegram.' });
+  }
+  deleteUpload(order.attachment);
+  db.prepare('DELETE FROM orders WHERE id = ?').run(order.id);
+  console.log(`[cabinet] клиент удалил свою заявку №${order.id} (${order.status})`);
+  res.json({ ok: true, id: order.id });
+});
+
 // ---------- Верификация клиента ----------
 
 const VERIFY_STATUSES = ['none', 'pending', 'approved', 'rejected'];
