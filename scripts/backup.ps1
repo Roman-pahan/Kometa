@@ -38,10 +38,21 @@ New-Item -ItemType Directory -Force -Path $uploads | Out-Null
 
 Write-Output "Забираю базу..."
 $dbPath = Join-Path $folder "exchange.db"
-$dbResponse = Invoke-WebRequest -Uri "$SiteUrl/api/admin/backup/db" -Headers $headers -OutFile $dbPath -TimeoutSec 300 -PassThru
-# Момент снимка: по нему сервер поймёт, что именно уже лежит здесь
-$snapshotAt = $dbResponse.Headers["X-Snapshot-At"]
-if ($snapshotAt -is [array]) { $snapshotAt = $snapshotAt[0] }
+# База качается потоком, а не через -OutFile с -PassThru: в Windows PowerShell 5.1
+# это сочетание падает с NullReferenceException, а заголовок ответа нам нужен.
+$request = [System.Net.HttpWebRequest]::Create("$SiteUrl/api/admin/backup/db")
+$request.Headers.Add("X-Backup-Token", $token)
+$request.Timeout = 300000
+$request.ReadWriteTimeout = 300000
+$response = $request.GetResponse()
+try {
+    # Момент снимка: по нему сервер поймёт, что именно уже лежит здесь
+    $snapshotAt = $response.Headers["X-Snapshot-At"]
+    $input = $response.GetResponseStream()
+    $output = [System.IO.File]::Create($dbPath)
+    try { $input.CopyTo($output) } finally { $output.Close(); $input.Close() }
+} finally { $response.Close() }
+if (-not $snapshotAt) { Write-Error "Сервер не сообщил момент снимка — подтверждать нечего." }
 $dbSize = [math]::Round((Get-Item $dbPath).Length / 1KB, 1)
 Write-Output "  база: $dbSize КБ"
 
@@ -64,7 +75,7 @@ $list = Invoke-RestMethod -Uri "$SiteUrl/api/admin/backup/files" -Headers $heade
 $received = @()
 foreach ($file in $list.files) {
     $target = Join-Path $uploads $file.name
-    Invoke-WebRequest -Uri "$SiteUrl/api/admin/backup/file/$($file.name)" -Headers $headers -OutFile $target -TimeoutSec 300
+    Invoke-WebRequest -Uri "$SiteUrl/api/admin/backup/file/$($file.name)" -Headers $headers -OutFile $target -TimeoutSec 300 -UseBasicParsing
     # В подтверждение попадает только то, что реально легло на диск нужного размера
     if ((Test-Path $target) -and ((Get-Item $target).Length -eq $file.size)) { $received += $file.name }
 }
