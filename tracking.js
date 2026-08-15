@@ -231,6 +231,9 @@ function sourceRows({ from = '', to = '' } = {}) {
     const exchange = clicks.find(c => c.ref === row.ref && c.event === 'exchange_click');
     const telegram = clicks.find(c => c.ref === row.ref && c.event === 'telegram_click');
     return {
+      // Номер заведённой ссылки: по нему её удаляют. У прямого трафика и у
+      // меток, которых никто не заводил, его нет — удалять там нечего.
+      id: source ? source.id : null,
       ref: row.ref,
       title: row.ref === '' ? 'Прямой трафик' : (source ? source.title : '(ссылка не заведена)'),
       known: !!source || row.ref === '',
@@ -254,7 +257,7 @@ function sourceRows({ from = '', to = '' } = {}) {
   for (const source of sources) {
     if (result.some(row => row.ref === source.ref)) continue;
     result.push({
-      ref: source.ref, title: source.title, known: true, enabled: !!source.enabled,
+      id: source.id, ref: source.ref, title: source.title, known: true, enabled: !!source.enabled,
       cost: source.cost, link: buildLink(source.ref),
       visits: 0, visitors: 0, repeat: 0, today: 0, last7: 0, last30: 0,
       first_visit: null, last_visit: null, exchange_clicks: 0, telegram_clicks: 0,

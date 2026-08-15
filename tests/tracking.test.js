@@ -325,3 +325,38 @@ test('дни разложены по каждой ссылке отдельно'
   assert.equal(b[0].visits, 1);
   assert.equal(b[0].telegram_clicks, 0, 'чужой переход во вторую ссылку не попал');
 });
+
+test('ссылка удаляется вместе со своей статистикой, чужую не трогает', async () => {
+  await admin('/api/admin/sources', { method: 'POST', body: JSON.stringify({ ref: 'udalim', title: 'На удаление' }) });
+  await admin('/api/admin/sources', { method: 'POST', body: JSON.stringify({ ref: 'ostanem', title: 'Остаётся' }) });
+
+  const doomed = visitor();
+  await doomed('/api/track', { method: 'POST', body: JSON.stringify({ ref: 'udalim', event: 'visit', path: '/' }) });
+  await doomed('/api/track', { method: 'POST', body: JSON.stringify({ event: 'telegram_click', path: '/' }) });
+  const keeper = visitor();
+  await keeper('/api/track', { method: 'POST', body: JSON.stringify({ ref: 'ostanem', event: 'visit', path: '/' }) });
+
+  const before = (await admin('/api/admin/stats')).data;
+  const target = before.sources.find(s => s.ref === 'udalim');
+  assert.ok(target.id, 'у заведённой ссылки есть номер, по которому её удалять');
+  assert.equal(target.visits, 1);
+
+  const removed = await admin('/api/admin/sources/' + target.id, { method: 'DELETE' });
+  assert.equal(removed.status, 200, removed.data.error);
+  assert.equal(removed.data.deleted_visits, 2, 'стёрты и посещение, и переход в Telegram');
+
+  const after = (await admin('/api/admin/stats')).data;
+  assert.equal(after.sources.find(s => s.ref === 'udalim'), undefined, 'ссылки в таблице больше нет');
+  assert.equal(after.daily_by_ref.filter(r => r.ref === 'udalim').length, 0, 'и в разбивке по дням тоже');
+
+  const kept = after.sources.find(s => s.ref === 'ostanem');
+  assert.equal(kept.visits, 1, 'соседняя ссылка осталась нетронутой');
+
+  const gone = await admin('/api/admin/sources/' + target.id, { method: 'DELETE' });
+  assert.equal(gone.status, 404, 'повторное удаление отвечает, что источника нет');
+});
+
+test('маркетолог удалять ссылки не может', async () => {
+  const res = await fetch(BASE + '/api/admin/sources/1', { method: 'DELETE', headers: { 'User-Agent': BROWSER } });
+  assert.equal(res.status, 403, 'без прав администратора удаление запрещено');
+});

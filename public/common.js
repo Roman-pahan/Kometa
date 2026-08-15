@@ -35,7 +35,9 @@ function trackClicks() {
     if (!el) return;
     const href = (el.getAttribute('href') || '');
     if (/t\.me\//.test(href)) return trackEvent('telegram_click');
-    if (['createOrderBtn', 'submitOrderBtn', 'recapSendBtn'].includes(el.id) || href === '#calc') {
+    // recapSendBtn здесь нет намеренно: это уже уход в Telegram, а не намерение
+    // посчитать обмен, и событие для него отправляется своё, на самой кнопке.
+    if (['createOrderBtn', 'submitOrderBtn'].includes(el.id) || href === '#calc') {
       trackEvent('exchange_click');
     }
   }, true);

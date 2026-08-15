@@ -336,6 +336,26 @@ app.patch('/api/admin/sources/:id', requireAdmin, (req, res) => {
   res.json({ ok: true });
 });
 
+// Удаление рекламной ссылки вместе с накопленной по ней статистикой.
+//
+// Записи стираются намеренно, а не остаются сиротами: иначе метка так и
+// продолжала бы висеть в таблице отдельной строкой, только уже без названия,
+// и разбираться в ней было бы ещё труднее. Это единственное место, где
+// статистика удаляется, и происходит это по прямой команде владельца.
+app.delete('/api/admin/sources/:id', requireAdmin, (req, res) => {
+  const source = db.prepare('SELECT * FROM ad_sources WHERE id = ?').get(Number(req.params.id));
+  if (!source) return res.status(404).json({ error: 'Источник не найден' });
+  // Одной транзакцией: ссылка без записей и записи без ссылки одинаково бесполезны
+  const remove = db.transaction(ref => {
+    const visits = db.prepare('DELETE FROM visits WHERE ref = ?').run(ref).changes;
+    db.prepare('DELETE FROM ad_sources WHERE id = ?').run(source.id);
+    return visits;
+  });
+  const deleted = remove(source.ref);
+  console.log(`[stats] удалена ссылка ${source.ref}, записей стёрто: ${deleted}`);
+  res.json({ ok: true, ref: source.ref, title: source.title, deleted_visits: deleted });
+});
+
 // ---------- Вход через Google ----------
 
 // Куда отправить человека после входа, в зависимости от его роли

@@ -216,6 +216,11 @@
 
       send.onclick = () => {
         if (!confirm.checked) return;
+        // Уход в Telegram записывается здесь руками: чат открывается через
+        // window.open, а не по ссылке, поэтому общий перехватчик кликов его
+        // не видит. Без этой строки самый ценный переход — клиент с готовой
+        // заявкой — не попадал бы в статистику переходов вообще.
+        trackEvent('telegram_click');
         // Текст уходит в поле ввода чата — клиенту остаётся нажать «Отправить»
         if (tg) window.open(`https://t.me/${encodeURIComponent(tg)}?text=${encodeURIComponent(order.recap || '')}`, '_blank', 'noopener');
         modal.classList.remove('open');

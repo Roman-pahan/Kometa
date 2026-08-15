@@ -314,6 +314,7 @@ function initStats(container, { manage = false } = {}) {
         <td>
           <button class="btn small detailBtn">Подробно</button>
           ${manage && r.known && r.ref ? '<button class="btn small editBtn">Изменить</button>' : ''}
+          ${manage && r.known && r.ref ? '<button class="btn small danger deleteBtn">Удалить</button>' : ''}
         </td>
       </tr>
     `).join('');
@@ -327,6 +328,27 @@ function initStats(container, { manage = false } = {}) {
     });
     $$('.detailBtn').forEach(btn => { btn.onclick = () => showDetail(btn.closest('tr').dataset.ref); });
     $$('.editBtn').forEach(btn => { btn.onclick = () => openModal(btn.closest('tr').dataset.ref); });
+
+    // Удаление необратимо и уносит с собой всю статистику по ссылке,
+    // поэтому в вопросе названы и канал, и то, что именно пропадёт.
+    $$('.deleteBtn').forEach(btn => {
+      btn.onclick = async () => {
+        const row = btn.closest('tr');
+        const ref = row.dataset.ref;
+        const source = (data.sources || []).find(s => s.ref === ref);
+        const name = source ? source.title : ref;
+        if (!window.confirm(
+          `Удалить ссылку «${name}» (ref ${ref})?\n\n` +
+          'Вместе с ней будут стёрты все её записи о посещениях за всё время.\n' +
+          'Отменить это нельзя.'
+        )) return;
+        try {
+          const result = await api('/api/admin/sources/' + source.id, 'DELETE');
+          alert(`Ссылка «${name}» удалена. Записей стёрто: ${result.deleted_visits}.`);
+          await load();
+        } catch (e) { alert(e.message); }
+      };
+    });
   }
 
   function dailyChart(daily) {
