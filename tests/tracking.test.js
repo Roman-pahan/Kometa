@@ -374,3 +374,65 @@ test('посторонний ссылки не трогает', async () => {
     assert.equal(res.status, 403, method + ' ' + url + ' закрыт для посторонних');
   }
 });
+
+test('пустой срок хранения означает «не удалять с сервера ничего»', async () => {
+  const Database = require('better-sqlite3');
+
+  // Кладём завершённую заявку месячной давности — ровно то, что раньше стиралось
+  const raw = new Database(DB_FILE);
+  const dir = raw.prepare('SELECT id FROM directions LIMIT 1').get();
+  const user = raw.prepare('SELECT id FROM users LIMIT 1').get();
+  const ins = raw.prepare(`INSERT INTO orders (user_id, direction_id, amount_from, amount_to, rate, status, contact, created_at)
+    VALUES (?, ?, 1000, 10, 0.01, 'done', 'test', datetime('now', '-40 days'))`);
+  const orderId = ins.run(user.id, dir.id).lastInsertRowid;
+  raw.close();
+
+  const settings = await admin('/api/admin/settings');
+  const token = settings.data.backup_token;
+  const confirm = body => fetch(BASE + '/api/admin/backup/confirm', {
+    method: 'POST',
+    headers: { 'X-Backup-Token': token, 'Content-Type': 'application/json', 'User-Agent': BROWSER },
+    body: JSON.stringify(body),
+  }).then(async r => ({ status: r.status, data: await r.json().catch(() => ({})) }));
+
+  // Пустое значение — «не удалять»
+  const off = await admin('/api/admin/settings', { method: 'PATCH', body: JSON.stringify({ purge_after_days: '' }) });
+  assert.equal(off.status, 200);
+  assert.equal((await admin('/api/admin/settings')).data.purge_after_days, null, 'сервер сообщает «не удалять»');
+
+  const kept = await confirm({ snapshot_at: new Date().toISOString(), files: [] });
+  assert.equal(kept.status, 200, kept.data.error);
+  assert.equal(kept.data.purge_after_days, null);
+  assert.equal(kept.data.deleted_orders, 0, 'при пустом сроке подтверждение ничего не стирает');
+
+  const check = new Database(DB_FILE, { readonly: true });
+  const alive = check.prepare('SELECT id FROM orders WHERE id = ?').get(orderId);
+  check.close();
+  assert.ok(alive, 'заявка осталась на сервере');
+});
+
+test('заданный срок хранения по-прежнему убирает старое', async () => {
+  const Database = require('better-sqlite3');
+  const raw = new Database(DB_FILE);
+  const dir = raw.prepare('SELECT id FROM directions LIMIT 1').get();
+  const user = raw.prepare('SELECT id FROM users LIMIT 1').get();
+  const orderId = raw.prepare(`INSERT INTO orders (user_id, direction_id, amount_from, amount_to, rate, status, contact, created_at)
+    VALUES (?, ?, 1000, 10, 0.01, 'cancelled', 'test', datetime('now', '-40 days'))`).run(user.id, dir.id).lastInsertRowid;
+  raw.close();
+
+  const token = (await admin('/api/admin/settings')).data.backup_token;
+  await admin('/api/admin/settings', { method: 'PATCH', body: JSON.stringify({ purge_after_days: 7 }) });
+
+  const done = await fetch(BASE + '/api/admin/backup/confirm', {
+    method: 'POST',
+    headers: { 'X-Backup-Token': token, 'Content-Type': 'application/json', 'User-Agent': BROWSER },
+    body: JSON.stringify({ snapshot_at: new Date().toISOString(), files: [] }),
+  }).then(async r => r.json());
+  assert.equal(done.purge_after_days, 7);
+  assert.ok(done.deleted_orders >= 1, 'старая завершённая заявка убрана с сервера');
+
+  const check = new Database(DB_FILE, { readonly: true });
+  const gone = check.prepare('SELECT id FROM orders WHERE id = ?').get(orderId);
+  check.close();
+  assert.equal(gone, undefined, 'её действительно нет');
+});

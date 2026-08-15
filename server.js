@@ -1283,9 +1283,15 @@ app.patch('/api/admin/settings', requireAdmin, (req, res) => {
   if (b.agent_token) setSetting('agent_token', String(b.agent_token).trim());
   // Через сколько дней завершённая заявка уходит с сервера после подтверждения
   if (b.purge_after_days !== undefined) {
-    const days = Number(b.purge_after_days);
-    if (!Number.isFinite(days) || days < 0) return res.status(400).json({ error: 'Срок хранения — число дней, от нуля' });
-    setSetting('purge_after_days', String(Math.round(days)));
+    // Пустое поле означает «не удалять никогда»
+    const asked = String(b.purge_after_days ?? '').trim();
+    if (asked === '') {
+      setSetting('purge_after_days', 'never');
+    } else {
+      const days = Number(asked);
+      if (!Number.isFinite(days) || days < 0) return res.status(400).json({ error: 'Срок хранения — число дней от нуля, либо пусто, чтобы не удалять' });
+      setSetting('purge_after_days', String(Math.round(days)));
+    }
   }
   if (b.google_client_id !== undefined) setSetting('google_client_id', String(b.google_client_id).trim());
   // Пустое значение секрета не затирает сохранённый, как и у пароля почты
@@ -1315,9 +1321,16 @@ function requireBackupToken(req, res, next) {
 
 // Сколько дней завершённая заявка ещё лежит на сервере после того, как её
 // копия подтверждена у владельца. Ноль означает «стирать сразу же».
+//
+// null означает «не удалять никогда» — и это значение по умолчанию. Сервер,
+// который сам ничего не стирает, теряет данные только вместе с диском, и
+// тогда их достаёт резервная копия. Обратный порядок — когда единственный
+// экземпляр переезжает на чужой компьютер — оставлял бы всё на одной ниточке.
 function purgeAfterDays() {
-  const value = Number(getSetting('purge_after_days'));
-  return Number.isFinite(value) && value >= 0 ? value : 30;
+  const raw = getSetting('purge_after_days');
+  if (raw === null || String(raw).trim() === '' || String(raw) === 'never') return null;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? value : null;
 }
 
 // Снимок базы целиком. VACUUM INTO делает согласованную копию на ходу —
@@ -1379,6 +1392,13 @@ app.post('/api/admin/backup/confirm', limitTokenAuth, requireBackupToken, (req, 
   const received = new Set((Array.isArray(req.body?.files) ? req.body.files : []).map(name => path.basename(String(name))));
   setSetting('backup_confirmed_at', snapshotAt);
 
+  // Срок не задан — сервер оставляет у себя всё. Подтверждение тогда значит
+  // только одно: копия у владельца есть, и по ней видно, на какой момент.
+  const days = purgeAfterDays();
+  if (days === null) {
+    return res.json({ ok: true, confirmed_at: snapshotAt, deleted_orders: 0, deleted_photos: 0, purge_after_days: null });
+  }
+
   // Фото верификации: стираем только те, по которым решение уже принято.
   // Пока заявка на верификацию висит, фото нужно самому оператору.
   const decided = db.prepare(`SELECT verify_passport, verify_selfie FROM users
@@ -1395,7 +1415,6 @@ app.post('/api/admin/backup/confirm', limitTokenAuth, requireBackupToken, (req, 
 
   // Заявки: только завершённые, только попавшие в подтверждённый снимок,
   // и только те, что отлежали заданный срок. Заявка в работе не трогается.
-  const days = purgeAfterDays();
   const purge = db.prepare(`DELETE FROM orders
     WHERE status IN ('done', 'cancelled')
       AND created_at <= ?

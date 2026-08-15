@@ -185,8 +185,8 @@
 
           <p class="muted small mt" id="backupStatus"></p>
           <div class="flex" style="align-items:flex-end">
-            <label class="field" style="max-width:260px;margin:0"><span>Хранить на сервере, дней</span>
-              <input id="purgeDays" type="number" min="0" step="1"></label>
+            <label class="field" style="max-width:300px;margin:0"><span>Хранить на сервере, дней (пусто — не удалять)</span>
+              <input id="purgeDays" type="number" min="0" step="1" placeholder="не удалять"></label>
             <button class="btn" id="savePurgeBtn">Сохранить</button>
           </div>
           <div class="msg" id="purgeMsg"></div>
@@ -745,10 +745,17 @@
         : '⚠️ Не настроен: кнопка «Войти через Google» скрыта.';
       // Пароль выгрузки данных на компьютер владельца
       document.getElementById('backupToken').textContent = s.backup_token || '';
-      document.getElementById('purgeDays').value = s.purge_after_days;
-      document.getElementById('backupStatus').innerHTML = s.backup_confirmed_at
-        ? `✅ Копия подтверждена: ${new Date(s.backup_confirmed_at).toLocaleString('ru-RU')}.`
-        : '⚠️ Копию ещё ни разу не забирали — данные существуют только на сервере.';
+      // Пусто в поле означает «не удалять»: сервер отдаёт для этого null
+      document.getElementById('purgeDays').value = s.purge_after_days ?? '';
+      // Молча устаревшая копия опаснее отсутствующей: кажется, что всё в порядке
+      const backupAgeDays = s.backup_confirmed_at
+        ? (Date.now() - Date.parse(s.backup_confirmed_at)) / 86400000
+        : null;
+      document.getElementById('backupStatus').innerHTML = backupAgeDays === null
+        ? '⚠️ Копию ещё ни разу не забирали — данные существуют только на сервере.'
+        : backupAgeDays > 2
+          ? `⚠️ Последняя копия: ${new Date(s.backup_confirmed_at).toLocaleString('ru-RU')} — это ${Math.floor(backupAgeDays)} дн. назад. Выгрузка не запускается.`
+          : `✅ Копия подтверждена: ${new Date(s.backup_confirmed_at).toLocaleString('ru-RU')}.`;
       // Готовые строки для .env бота и время последней присылки курсов
       document.getElementById('agentEnv').textContent = s.agent_env || '';
       document.getElementById('agentRatesStatus').innerHTML = s.agent_rates_at
