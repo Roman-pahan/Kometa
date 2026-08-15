@@ -341,7 +341,7 @@ function initStats(container, { manage = false } = {}) {
         <td>
           <button class="btn small detailBtn">Подробно</button>
           ${manage && r.known && r.ref ? '<button class="btn small editBtn">Изменить</button>' : ''}
-          ${manage && r.known && r.ref ? '<button class="btn small danger deleteBtn">Удалить</button>' : ''}
+          ${manage && r.ref ? '<button class="btn small danger deleteBtn">Удалить</button>' : ''}
         </td>
       </tr>
     `).join('');
@@ -363,15 +363,18 @@ function initStats(container, { manage = false } = {}) {
         const row = btn.closest('tr');
         const ref = row.dataset.ref;
         const source = (data.sources || []).find(s => s.ref === ref);
-        const name = source ? source.title : ref;
+        const known = source && source.known;
+        const name = known ? `«${source.title}»` : `с меткой ${ref}`;
         if (!window.confirm(
-          `Удалить ссылку «${name}» (ref ${ref})?\n\n` +
+          `Удалить ссылку ${name}?\n\n` +
           'Вместе с ней будут стёрты все её записи о посещениях за всё время.\n' +
-          'Отменить это нельзя.'
+          'Отменить это нельзя.\n\n' +
+          'Если по этой метке уже ходили с вашего браузера, она вернётся при следующем\n' +
+          'вашем заходе: метка помнится в браузере 30 дней. Почистите куки сайта.'
         )) return;
         try {
-          const result = await api('/api/admin/sources/' + source.id, 'DELETE');
-          alert(`Ссылка «${name}» удалена. Записей стёрто: ${result.deleted_visits}.`);
+          const result = await api('/api/admin/sources/' + encodeURIComponent(ref), 'DELETE');
+          alert(`Ссылка ${name} удалена. Записей стёрто: ${result.deleted_visits}.`);
           await load();
         } catch (e) { alert(e.message); }
       };

@@ -273,7 +273,7 @@ test('маркетолог видит статистику и не видит о
   const edit = await own('/api/admin/sources/' + create.data.id, { method: 'PATCH', body: JSON.stringify({ title: 'Переименована' }) });
   assert.equal(edit.status, 200, 'и правит их');
 
-  const drop = await own('/api/admin/sources/' + create.data.id, { method: 'DELETE' });
+  const drop = await own('/api/admin/sources/from_marketer', { method: 'DELETE' });
   assert.equal(drop.status, 200, 'и удаляет их');
 });
 
@@ -350,7 +350,7 @@ test('ссылка удаляется вместе со своей статис�
   assert.ok(target.id, 'у заведённой ссылки есть номер, по которому её удалять');
   assert.equal(target.visits, 1);
 
-  const removed = await admin('/api/admin/sources/' + target.id, { method: 'DELETE' });
+  const removed = await admin('/api/admin/sources/udalim', { method: 'DELETE' });
   assert.equal(removed.status, 200, removed.data.error);
   assert.equal(removed.data.deleted_visits, 2, 'стёрты и посещение, и переход в Telegram');
 
@@ -361,8 +361,8 @@ test('ссылка удаляется вместе со своей статис�
   const kept = after.sources.find(s => s.ref === 'ostanem');
   assert.equal(kept.visits, 1, 'соседняя ссылка осталась нетронутой');
 
-  const gone = await admin('/api/admin/sources/' + target.id, { method: 'DELETE' });
-  assert.equal(gone.status, 404, 'повторное удаление отвечает, что источника нет');
+  const gone = await admin('/api/admin/sources/udalim', { method: 'DELETE' });
+  assert.equal(gone.status, 404, 'повторное удаление отвечает, что метки нет');
 });
 
 test('посторонний ссылки не трогает', async () => {
@@ -437,4 +437,30 @@ test('заданный срок хранения по-прежнему убир�
   const gone = check.prepare('SELECT id FROM orders WHERE id = ?').get(orderId);
   check.close();
   assert.equal(gone, undefined, 'её действительно нет');
+});
+
+test('метку без заведённой ссылки тоже можно убрать', async () => {
+  // Так появляется мусор: параметр ref дописывает кто угодно, ссылку никто не заводил
+  const guest = visitor();
+  await guest('/api/track', { method: 'POST', body: JSON.stringify({ ref: 'levaya', event: 'visit', path: '/' }) });
+
+  const before = (await admin('/api/admin/stats')).data;
+  const row = before.sources.find(s => s.ref === 'levaya');
+  assert.ok(row, 'метка видна в таблице');
+  assert.equal(row.known, false, 'ссылка под неё не заведена');
+  assert.equal(row.id, null, 'и номера у неё нет — удалять придётся по самой метке');
+
+  const removed = await admin('/api/admin/sources/levaya', { method: 'DELETE' });
+  assert.equal(removed.status, 200, removed.data.error);
+  assert.equal(removed.data.deleted_visits, 1);
+  assert.equal(removed.data.title, null, 'названия у неё не было');
+
+  const after = (await admin('/api/admin/stats')).data;
+  assert.equal(after.sources.find(s => s.ref === 'levaya'), undefined, 'строка пропала');
+});
+
+test('прямой трафик удалить нельзя', async () => {
+  // Пустая метка — это все заходы без рекламы, отдельной строкой её не сносят
+  const res = await admin('/api/admin/sources/%20', { method: 'DELETE' });
+  assert.equal(res.status, 400, 'сервер отказывается стирать прямой трафик');
 });
