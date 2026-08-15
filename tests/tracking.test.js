@@ -13,6 +13,7 @@ const path = require('node:path');
 const PORT = 3987;
 const BASE = `http://127.0.0.1:${PORT}`;
 const DB_FILE = path.join(os.tmpdir(), `kometa-test-${crypto.randomBytes(6).toString('hex')}.db`);
+const UPLOADS_DIR = path.join(os.tmpdir(), `kometa-uploads-${crypto.randomBytes(6).toString('hex')}`);
 // Учётка администратора создаётся только внутри временной базы
 const ADMIN_EMAIL = 'stats-test@example.invalid';
 const ADMIN_PASSWORD = crypto.randomBytes(18).toString('hex');
@@ -43,7 +44,7 @@ function visitor() {
 before(async () => {
   server = spawn(process.execPath, ['server.js'], {
     cwd: path.join(__dirname, '..'),
-    env: { ...process.env, PORT: String(PORT), DB_FILE, ADMIN_EMAIL, ADMIN_PASSWORD, NODE_ENV: 'test' },
+    env: { ...process.env, UPLOADS_DIR, PORT: String(PORT), DB_FILE, ADMIN_EMAIL, ADMIN_PASSWORD, NODE_ENV: 'test' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   // Ждём, пока сервер сообщит, что слушает порт
@@ -67,6 +68,7 @@ after(() => {
   for (const suffix of ['', '-wal', '-shm']) {
     try { fs.unlinkSync(DB_FILE + suffix); } catch (_) { /* файла может не быть */ }
   }
+  try { fs.rmSync(UPLOADS_DIR, { recursive: true, force: true }); } catch (_) { /* её могло и не быть */ }
 });
 
 function admin(url, options = {}) {

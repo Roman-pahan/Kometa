@@ -56,7 +56,9 @@ app.use((req, res, next) => {
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-const uploadsDir = path.join(__dirname, 'data', 'uploads');
+// Папку вложений можно переопределить, как и файл базы: иначе тесты, которые
+// проверяют загрузку документов, сыплют свои картинки в боевое хранилище.
+const uploadsDir = process.env.UPLOADS_DIR || path.join(__dirname, 'data', 'uploads');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
 // Адрес сайта для ссылок в письмах и уведомлениях. Берётся из настройки, а не
@@ -1161,6 +1163,41 @@ app.patch('/api/admin/orders/:id', requireAdmin, (req, res) => {
     WHERE id = ?
   `).run(status ?? null, admin_comment !== undefined ? String(admin_comment) : null, order.id);
   res.json({ ok: true });
+});
+
+// Удаление заявки вместе с приложенным к ней фото реквизитов.
+//
+// Стёртая заявка остаётся во вчерашней резервной копии и ещё в двадцати девяти
+// до неё, так что ошибочное удаление не окончательно — но искать её придётся
+// там, а не на сайте. Поэтому спрашиваем прямо, а не молча выполняем.
+app.delete('/api/admin/orders/:id', requireAdmin, (req, res) => {
+  const order = db.prepare('SELECT * FROM orders WHERE id = ?').get(Number(req.params.id));
+  if (!order) return res.status(404).json({ error: 'Заявка не найдена' });
+  deleteUpload(order.attachment);
+  db.prepare('DELETE FROM orders WHERE id = ?').run(order.id);
+  console.log(`[admin] удалена заявка №${order.id} (${order.status})`);
+  res.json({ ok: true, id: order.id, had_attachment: !!order.attachment });
+});
+
+// Удаление верификации: фото с диска и все присланные клиентом данные.
+//
+// Учётная запись остаётся — клиент сможет подать документы заново. Уходит
+// именно то, что он присылал на проверку, включая ФИО, телефон и телеграм:
+// половинчатое удаление, оставляющее персональные данные, никого не устроит.
+app.delete('/api/admin/verifications/:userId', requireAdmin, (req, res) => {
+  const user = db.prepare('SELECT id, verify_passport, verify_selfie FROM users WHERE id = ?').get(Number(req.params.userId));
+  if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
+  let photos = 0;
+  for (const name of [user.verify_passport, user.verify_selfie]) {
+    if (!name) continue;
+    deleteUpload(name);
+    photos++;
+  }
+  db.prepare(`UPDATE users SET verify_status = 'none', verify_passport = NULL, verify_selfie = NULL,
+    verify_comment = '', verify_submitted_at = NULL,
+    full_name = '', phone = '', telegram = '' WHERE id = ?`).run(user.id);
+  console.log(`[admin] удалена верификация клиента №${user.id}, фото стёрто: ${photos}`);
+  res.json({ ok: true, id: user.id, deleted_photos: photos });
 });
 
 app.get('/api/admin/directions', requireAdmin, (req, res) => {

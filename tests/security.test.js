@@ -15,6 +15,7 @@ const Database = require('better-sqlite3');
 const PORT = 3991;
 const BASE = `http://127.0.0.1:${PORT}`;
 const DB_FILE = path.join(os.tmpdir(), `kometa-security-${crypto.randomBytes(6).toString('hex')}.db`);
+const UPLOADS_DIR = path.join(os.tmpdir(), `kometa-uploads-${crypto.randomBytes(6).toString('hex')}`);
 const ADMIN_EMAIL = 'security-test@example.invalid';
 const ADMIN_PASSWORD = crypto.randomBytes(18).toString('hex');
 const PUBLIC_URL = 'https://kometa.test';
@@ -47,7 +48,7 @@ function pngDataUrl(bytes = 4000) {
 before(async () => {
   server = spawn(process.execPath, ['server.js'], {
     cwd: path.join(__dirname, '..'),
-    env: { ...process.env, PORT: String(PORT), DB_FILE, ADMIN_EMAIL, ADMIN_PASSWORD, PUBLIC_URL, NODE_ENV: 'test' },
+    env: { ...process.env, UPLOADS_DIR, PORT: String(PORT), DB_FILE, ADMIN_EMAIL, ADMIN_PASSWORD, PUBLIC_URL, NODE_ENV: 'test' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   server.stderr.on('data', chunk => {
@@ -73,6 +74,7 @@ after(() => {
   for (const suffix of ['', '-wal', '-shm']) {
     try { fs.unlinkSync(DB_FILE + suffix); } catch (_) { /* уже нет */ }
   }
+  try { fs.rmSync(UPLOADS_DIR, { recursive: true, force: true }); } catch (_) { /* её могло и не быть */ }
 });
 
 test('версия сервера наружу не сообщается', async () => {
@@ -215,4 +217,78 @@ test('подбор пароля упирается в предел', async () =>
     method: 'POST', body: JSON.stringify({ email, password: 'parol123' }),
   });
   assert.equal(withRightPassword.status, 429);
+});
+
+test('удаление верификации стирает фото с диска и присланные данные', async () => {
+  // Пользователя заводим прямо в базе: счётчик регистраций к этому месту уже
+  // исчерпан другими проверками, а предмет этого теста — не он
+  const { hashPasswordSync } = require('../security');
+  const email = `verif-${crypto.randomBytes(4).toString('hex')}@example.invalid`;
+  const password = crypto.randomBytes(12).toString('hex');
+  const salt = crypto.randomBytes(16).toString('hex');
+  const seed = new Database(DB_FILE);
+  seed.prepare("INSERT INTO users (email, name, pass_hash, pass_salt) VALUES (?, '', ?, ?)")
+    .run(email, hashPasswordSync(password, salt), salt);
+  seed.close();
+
+  const login = await json('/api/login', { method: 'POST', body: JSON.stringify({ email, password }) });
+  assert.equal(login.status, 200, 'заведённый клиент входит');
+  const cookie = (login.res.headers.getSetCookie?.() || []).map(c => c.split(';')[0]).join('; ');
+
+  const before = fs.readdirSync(UPLOADS_DIR).length;
+  const sent = await json('/api/verification', {
+    method: 'POST',
+    headers: { Cookie: cookie },
+    body: JSON.stringify({
+      full_name: 'Сидоров Сидор', phone: '+79005554433', telegram: 'sidorov',
+      passport: pngDataUrl(), selfie: pngDataUrl(),
+    }),
+  });
+  assert.equal(sent.status, 200, sent.data.error);
+  assert.equal(fs.readdirSync(UPLOADS_DIR).length, before + 2, 'оба фото легли на диск');
+
+  const list = await asAdmin('/api/admin/verifications');
+  const target = list.data.users.find(u => u.email === email);
+  assert.equal(target.verify_status, 'pending');
+  assert.equal(target.has_passport, 1);
+
+  const removed = await asAdmin('/api/admin/verifications/' + target.id, { method: 'DELETE' });
+  assert.equal(removed.status, 200, removed.data.error);
+  assert.equal(removed.data.deleted_photos, 2);
+  assert.equal(fs.readdirSync(UPLOADS_DIR).length, before, 'фото исчезли с диска');
+
+  // Учётка осталась, но всё присланное на проверку ушло
+  const own = await json('/api/verification', { headers: { Cookie: cookie } });
+  assert.equal(own.data.status, 'none', 'клиент может подать документы заново');
+  assert.equal(own.data.full_name, '');
+  assert.equal(own.data.phone, '');
+  assert.equal(own.data.telegram, '');
+});
+
+test('удаление заявки убирает её насовсем', async () => {
+  const raw = new Database(DB_FILE);
+  const dir = raw.prepare('SELECT id FROM directions LIMIT 1').get();
+  const user = raw.prepare('SELECT id FROM users WHERE is_admin = 0 LIMIT 1').get();
+  const id = raw.prepare(`INSERT INTO orders (user_id, direction_id, amount_from, amount_to, rate, status, contact)
+    VALUES (?, ?, 5000, 50, 0.01, 'new', 'udalyaem')`).run(user.id, dir.id).lastInsertRowid;
+  raw.close();
+
+  const listed = await asAdmin('/api/admin/orders');
+  assert.ok(listed.data.orders.some(o => o.id === id), 'заявка видна до удаления');
+
+  const removed = await asAdmin('/api/admin/orders/' + id, { method: 'DELETE' });
+  assert.equal(removed.status, 200, removed.data.error);
+
+  const after = await asAdmin('/api/admin/orders');
+  assert.ok(!after.data.orders.some(o => o.id === id), 'и пропала после');
+
+  const again = await asAdmin('/api/admin/orders/' + id, { method: 'DELETE' });
+  assert.equal(again.status, 404, 'повторное удаление отвечает, что заявки нет');
+});
+
+test('заявки и верификации удаляет только администратор', async () => {
+  for (const url of ['/api/admin/orders/1', '/api/admin/verifications/1']) {
+    const res = await request(url, { method: 'DELETE' });
+    assert.equal(res.status, 403, url + ' закрыт для посторонних');
+  }
 });

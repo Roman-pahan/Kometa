@@ -34,7 +34,7 @@
         <div class="table-wrap">
           <table>
             <thead>
-              <tr><th>№</th><th>Дата</th><th>Клиент</th><th>Направление</th><th>Отдаёт</th><th>Получает</th><th>Курс</th><th>Контакт</th><th>Реквизиты</th><th>Статус</th><th>Комментарий</th></tr>
+              <tr><th>№</th><th>Дата</th><th>Клиент</th><th>Направление</th><th>Отдаёт</th><th>Получает</th><th>Курс</th><th>Контакт</th><th>Реквизиты</th><th>Статус</th><th>Комментарий</th><th></th></tr>
             </thead>
             <tbody id="ordersBody"></tbody>
           </table>
@@ -342,8 +342,10 @@
       return lines.join('<br>');
     }
 
+    let ORDERS = [];
     async function loadOrders() {
       const { orders } = await api('/api/admin/orders');
+      ORDERS = orders;
       document.getElementById('ordersEmpty').style.display = orders.length ? 'none' : 'block';
       document.getElementById('ordersBody').innerHTML = orders.map(o => `
         <tr data-id="${o.id}">
@@ -362,6 +364,7 @@
             </select>
           </td>
           <td><input class="adminComment" value="${esc(o.admin_comment || '')}" placeholder="Комментарий клиенту" style="min-width:150px"></td>
+          <td><button class="btn small danger deleteOrderBtn">Удалить</button></td>
         </tr>
       `).join('');
 
@@ -371,6 +374,22 @@
           api('/api/admin/orders/' + id, 'PATCH', { status: e.target.value }).catch(err => alert(err.message));
         tr.querySelector('.adminComment').onchange = (e) =>
           api('/api/admin/orders/' + id, 'PATCH', { admin_comment: e.target.value }).catch(err => alert(err.message));
+
+        // В вопросе называем заявку и её состояние: удалять «в работе» обычно
+        // не собираются, и увидеть это надо до нажатия, а не после
+        tr.querySelector('.deleteOrderBtn').onclick = async () => {
+          const order = ORDERS.find(o => String(o.id) === String(id));
+          const state = STATUS_OPTIONS.find(([v]) => v === order.status);
+          if (!confirm(
+            `Удалить заявку №${id} (${state ? state[1].toLowerCase() : order.status})?\n\n` +
+            `${order.amount_from} ${order.from_cur} → ${order.amount_to} ${order.to_cur}, клиент ${order.user_email}\n\n` +
+            'Заявка и приложенное к ней фото исчезнут с сайта. Восстановить можно только из резервной копии на вашем компьютере.'
+          )) return;
+          try {
+            await api('/api/admin/orders/' + id, 'DELETE');
+            await loadOrders();
+          } catch (e) { alert(e.message); }
+        };
       });
     }
 
@@ -434,6 +453,7 @@
             <button class="btn success small approveBtn">✅ Подтвердить</button>
             <button class="btn danger small rejectBtn">Отклонить</button>
             <input class="rejectReason grow" placeholder="Причина отклонения (увидит клиент)" value="${esc(u.verify_comment || '')}">
+            <button class="btn danger small deleteVerifyBtn">Удалить</button>
           </div>
         </div>
       `).join('');
@@ -448,6 +468,18 @@
           if (!reason) return alert('Укажите причину отклонения — клиент увидит её в кабинете');
           api('/api/admin/verifications/' + id, 'PATCH', { status: 'rejected', comment: reason })
             .then(() => { loadVerifications(); loadOrders(); loadClients(); }).catch(e => alert(e.message));
+        };
+        card.querySelector('.deleteVerifyBtn').onclick = async () => {
+          const who = card.querySelector('b').textContent;
+          if (!confirm(
+            `Удалить верификацию клиента ${who}?\n\n` +
+            'Фото паспорта и лица будут стёрты с сервера, вместе с ними — ФИО, телефон и телеграм.\n' +
+            'Учётная запись останется, документы клиент сможет подать заново.'
+          )) return;
+          try {
+            await api('/api/admin/verifications/' + id, 'DELETE');
+            loadVerifications(); loadOrders(); loadClients();
+          } catch (e) { alert(e.message); }
         };
       });
     }
