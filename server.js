@@ -12,17 +12,29 @@ const agent = require('./agent');
 const { buildClientRecap } = require('./order-recap');
 const tracking = require('./tracking');
 const googleAuth = require('./google-auth');
+const { clientIp, rateLimit, reset: resetLimit, hashPassword, hashPasswordSync, verifyPassword, TooBusyError } = require('./security');
 
 const PORT = process.env.PORT || 3210;
 const app = express();
 // За nginx: доверяем X-Forwarded-*, иначе req.secure и ссылки в письмах будут http
 app.set('trust proxy', 1);
-// Лимит увеличен: документы верификации приходят как base64-картинки
-app.use(express.json({ limit: '25mb' }));
+// Версия сервера наружу не сообщается: подсказывать, чем ломать, незачем
+app.disable('x-powered-by');
+
+// Разбор тела запроса. Двадцать пять мегабайт нужны ровно двум адресам, где
+// приходят картинки в base64. Всем остальным столько незачем, а открытый на
+// весь сайт лимит — это готовый способ занять память сервера пустыми запросами.
+const HEAVY_BODY_ROUTES = new Set(['/api/verification', '/api/orders']);
+const heavyJson = express.json({ limit: '25mb' });
+const lightJson = express.json({ limit: '200kb' });
+app.use((req, res, next) => (HEAVY_BODY_ROUTES.has(req.path) ? heavyJson : lightJson)(req, res, next));
 
 // Заголовки безопасности. Главное здесь — запрет чужих скриптов и кадров:
 // подменить то, что оператор видит на странице, можно только чужим кодом.
 app.use((req, res, next) => {
+  // По HTTPS браузеру говорим больше сюда не ходить открытым текстом:
+  // иначе остаётся окно на первом заходе, когда адрес набран без https.
+  if (req.secure) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   res.setHeader('Content-Security-Policy', [
     "default-src 'self'",
     // Свои страницы держат скрипты и стили внутри разметки
@@ -47,26 +59,60 @@ app.use(express.static(path.join(__dirname, 'public')));
 const uploadsDir = path.join(__dirname, 'data', 'uploads');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
+// Адрес сайта для ссылок в письмах и уведомлениях. Берётся из настройки, а не
+// из заголовка запроса: заголовок присылает клиент, и подменив его, можно было
+// увести ссылку сброса пароля на чужой домен вместе с рабочим токеном.
+function publicBase(req) {
+  const configured = (process.env.PUBLIC_URL || '').trim().replace(/\/+$/, '');
+  if (/^https?:\/\/\S+$/.test(configured)) return configured;
+  return `${req.protocol}://${req.get('host')}`;
+}
+
 // ---------- Пароли и сессии ----------
 
-function hashPassword(password, salt) {
-  return crypto.scryptSync(password, salt, 64).toString('hex');
+// Сколько сессия живёт без обращений. Каждый заход продлевает срок, поэтому
+// тот, кто пользуется кабинетом, не разлогинивается; забытая на чужом
+// компьютере кука сама перестаёт работать через месяц.
+const SESSION_TTL_DAYS = 30;
+
+// Продлевать чаще раза в час незачем: это была бы запись в базу на каждый запрос
+const SESSION_RENEW_AFTER_MS = 60 * 60 * 1000;
+
+function sessionCookieToken(req) {
+  const match = (req.headers.cookie || '').match(/(?:^|;\s*)sid=([a-f0-9]{64})/);
+  return match ? match[1] : null;
 }
 
 function createSession(userId) {
   const token = crypto.randomBytes(32).toString('hex');
-  db.prepare('INSERT INTO sessions (token, user_id) VALUES (?, ?)').run(token, userId);
+  db.prepare(`INSERT INTO sessions (token, user_id, expires_at, used_at)
+    VALUES (?, ?, datetime('now', '+${SESSION_TTL_DAYS} days'), datetime('now'))`).run(token, userId);
   return token;
 }
 
 function getSessionUser(req) {
-  const cookie = req.headers.cookie || '';
-  const match = cookie.match(/(?:^|;\s*)sid=([a-f0-9]{64})/);
-  if (!match) return null;
-  return db.prepare(`
-    SELECT u.id, u.email, u.name, u.is_admin, u.role, u.verify_status FROM sessions s
-    JOIN users u ON u.id = s.user_id WHERE s.token = ?
-  `).get(match[1]) || null;
+  const token = sessionCookieToken(req);
+  if (!token) return null;
+  const row = db.prepare(`
+    SELECT u.id, u.email, u.name, u.is_admin, u.role, u.verify_status, s.used_at FROM sessions s
+    JOIN users u ON u.id = s.user_id
+    WHERE s.token = ? AND s.expires_at > datetime('now')
+  `).get(token);
+  if (!row) return null;
+  // Сессия живая — отодвигаем срок. Раз в час, а не на каждом запросе.
+  const usedAt = row.used_at ? Date.parse(row.used_at.replace(' ', 'T') + 'Z') : 0;
+  if (!usedAt || Date.now() - usedAt > SESSION_RENEW_AFTER_MS) {
+    db.prepare(`UPDATE sessions SET used_at = datetime('now'),
+      expires_at = datetime('now', '+${SESSION_TTL_DAYS} days') WHERE token = ?`).run(token);
+  }
+  const { used_at, ...user } = row;
+  return user;
+}
+
+// Просроченные сессии убираются с диска: раз в сутки и при запуске
+function sweepSessions() {
+  const gone = db.prepare("DELETE FROM sessions WHERE expires_at <= datetime('now')").run().changes;
+  if (gone) console.log(`[sessions] просроченных сессий удалено: ${gone}`);
 }
 
 function requireAuth(req, res, next) {
@@ -106,49 +152,108 @@ function setSidCookie(req, res, token) {
   const exists = db.prepare('SELECT id FROM users WHERE is_admin = 1').get();
   if (exists) return;
   const email = process.env.ADMIN_EMAIL || 'admin@obmen.local';
-  const password = process.env.ADMIN_PASSWORD || 'admin12345';
+  // Пароль по умолчанию годится только там, где сервер никому не виден.
+  // На боевом сервере он задаётся переменной окружения, иначе учётка
+  // администратора открыта всем, кто читал этот файл.
+  const fallback = crypto.randomBytes(12).toString('base64url');
+  const password = process.env.ADMIN_PASSWORD || fallback;
   const salt = crypto.randomBytes(16).toString('hex');
   db.prepare('INSERT INTO users (email, name, pass_hash, pass_salt, is_admin) VALUES (?, ?, ?, ?, 1)')
-    .run(email, 'Администратор', hashPassword(password, salt), salt);
-  console.log(`[init] Создан администратор: ${email} / ${password} — смените пароль!`);
+    .run(email, 'Администратор', hashPasswordSync(password, salt), salt);
+  // Сам пароль в лог не пишется: логи сервера живут долго и видны не только
+  // владельцу. Случайный показывается один раз — задать свой можно в админке.
+  if (process.env.ADMIN_PASSWORD) {
+    console.log(`[init] создан администратор ${email}, пароль из ADMIN_PASSWORD`);
+  } else {
+    console.log(`[init] создан администратор ${email}, временный пароль: ${password}`);
+    console.log('[init] ADMIN_PASSWORD не задан — смените пароль в админке сразу после входа');
+  }
 })();
 
 // ---------- Аутентификация ----------
 
-app.post('/api/register', (req, res) => {
+const MINUTE = 60 * 1000;
+const bodyEmail = req => String(req.body?.email || '').toLowerCase().trim();
+
+// Подбор пароля ограничивается с двух сторон: по адресу, откуда стучат, и по
+// учётке, в которую стучат. Первое отсекает перебор паролей к одной почте,
+// второе — перебор почт с одного места.
+const limitLoginByIp = rateLimit({
+  name: 'login-ip', limit: 20, windowMs: 15 * MINUTE,
+  message: 'Слишком много попыток входа. Подождите 15 минут.',
+});
+const limitLoginByEmail = rateLimit({
+  name: 'login-email', limit: 10, windowMs: 15 * MINUTE, by: bodyEmail,
+  message: 'Слишком много попыток входа в эту учётную запись. Подождите 15 минут.',
+});
+
+// Регистрация — вход на сайт для чужого человека, и она же способ занять диск:
+// каждый аккаунт может загрузить документы верификации.
+const limitRegister = rateLimit({
+  name: 'register', limit: 5, windowMs: 60 * MINUTE,
+  message: 'Слишком много регистраций с этого адреса. Попробуйте через час.',
+});
+
+// Восстановление пароля шлёт письмо и считает хеш — и то и другое чужими руками
+const limitForgot = rateLimit({ name: 'forgot-ip', limit: 10, windowMs: 60 * MINUTE });
+const limitReset = rateLimit({ name: 'reset-ip', limit: 20, windowMs: 60 * MINUTE });
+
+// Ответ на переполненную очередь проверок пароля: сервер не отказывает
+// насовсем, а просит повторить, — так поток запросов не роняет сайт целиком.
+function handleAuthError(res, error) {
+  if (error instanceof TooBusyError) return res.status(503).json({ error: error.message });
+  throw error;
+}
+
+app.post('/api/register', limitRegister, async (req, res) => {
   const { email, password, name } = req.body || {};
   if (!email || !/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ error: 'Укажите корректный email' });
   if (!password || password.length < 6) return res.status(400).json({ error: 'Пароль минимум 6 символов' });
   const salt = crypto.randomBytes(16).toString('hex');
   try {
+    const hash = await hashPassword(password, salt);
     const info = db.prepare('INSERT INTO users (email, name, pass_hash, pass_salt) VALUES (?, ?, ?, ?)')
-      .run(email.toLowerCase().trim(), (name || '').trim(), hashPassword(password, salt), salt);
+      .run(email.toLowerCase().trim(), (name || '').trim(), hash, salt);
     setSidCookie(req, res, createSession(info.lastInsertRowid));
     res.json({ ok: true });
   } catch (e) {
     if (String(e.message).includes('UNIQUE')) return res.status(400).json({ error: 'Такой email уже зарегистрирован' });
-    throw e;
+    handleAuthError(res, e);
   }
 });
 
-app.post('/api/login', (req, res) => {
+app.post('/api/login', limitLoginByIp, limitLoginByEmail, async (req, res) => {
   const { email, password } = req.body || {};
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(String(email || '').toLowerCase().trim());
-  // Пустой pass_hash — у аккаунта, заведённого через Google: паролем в него не войти
-  if (!user || !user.pass_hash || hashPassword(String(password || ''), user.pass_salt) !== user.pass_hash) {
-    return res.status(400).json({ error: 'Неверный email или пароль' });
+  const address = bodyEmail(req);
+  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(address);
+  try {
+    // Пустой pass_hash — у аккаунта, заведённого через Google: паролем в него не войти
+    const ok = user && user.pass_hash && await verifyPassword(String(password || ''), user.pass_salt, user.pass_hash);
+    if (!ok) return res.status(400).json({ error: 'Неверный email или пароль' });
+    // Пароль подошёл — накопленные попытки больше ничего не значат
+    resetLimit(`login-ip:${clientIp(req)}`);
+    resetLimit(`login-email:${address}`);
+    setSidCookie(req, res, createSession(user.id));
+    // Роль нужна странице входа: маркетолога она ведёт в кабинет статистики
+    res.json({ ok: true, is_admin: !!user.is_admin, role: user.role || '' });
+  } catch (e) {
+    handleAuthError(res, e);
   }
-  setSidCookie(req, res, createSession(user.id));
-  // Роль нужна странице входа: маркетолога она ведёт в кабинет статистики
-  res.json({ ok: true, is_admin: !!user.is_admin, role: user.role || '' });
 });
 
 app.post('/api/logout', (req, res) => {
-  const cookie = req.headers.cookie || '';
-  const match = cookie.match(/(?:^|;\s*)sid=([a-f0-9]{64})/);
-  if (match) db.prepare('DELETE FROM sessions WHERE token = ?').run(match[1]);
+  const token = sessionCookieToken(req);
+  if (token) db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
   res.setHeader('Set-Cookie', 'sid=; HttpOnly; Path=/; Max-Age=0');
   res.json({ ok: true });
+});
+
+// Выход со всех устройств. Нужен ровно тогда, когда есть подозрение, что кука
+// утекла: сменить пароль мало, если чужая сессия уже открыта.
+app.post('/api/logout-everywhere', requireAuth, (req, res) => {
+  const gone = db.prepare('DELETE FROM sessions WHERE user_id = ?').run(req.user.id).changes;
+  res.setHeader('Set-Cookie', 'sid=; HttpOnly; Path=/; Max-Age=0');
+  res.json({ ok: true, closed: gone });
 });
 
 app.get('/api/me', (req, res) => {
@@ -159,8 +264,12 @@ app.get('/api/me', (req, res) => {
 // ---------- Учёт рекламного трафика ----------
 
 // Сайт сам сообщает о посещении и о нажатиях. Открытый эндпоинт: он только
-// пишет обезличенную строку и ничего не отдаёт наружу.
-app.post('/api/track', (req, res) => {
+// пишет обезличенную строку и ничего не отдаёт наружу. Защита от повторов
+// внутри опирается на куку посетителя, а её можно и не присылать — поэтому
+// счёт по адресу здесь тоже нужен, иначе строками забивается диск.
+const limitTrack = rateLimit({ name: 'track', limit: 120, windowMs: 60 * 1000 });
+
+app.post('/api/track', limitTrack, (req, res) => {
   const { ref, event, path: page } = req.body || {};
   try {
     const result = tracking.recordEvent(req, res, { ref, event, path: page });
@@ -282,9 +391,10 @@ async function inviteToSetPassword(req, user, purpose) {
   const token = crypto.randomBytes(32).toString('hex');
   db.prepare(`INSERT INTO password_resets (token, user_id, expires_at)
     VALUES (?, ?, datetime('now', '+${INVITE_TTL_MIN} minutes'))`).run(token, user.id);
-  const link = `${req.protocol}://${req.get('host')}/reset.html?token=${token}`;
-  // Ссылка пишется в лог: без настроенной почты её можно передать вручную
-  console.log(`[invite] ${purpose} для ${user.email}: ${link}`);
+  const link = `${publicBase(req)}/reset.html?token=${token}`;
+  // Сама ссылка в лог не пишется: по ней входят в учётную запись, а логи
+  // сервера хранятся долго. Администратор видит её в ответе, в админке.
+  console.log(`[invite] ${purpose} для ${user.email}`);
   let mailed = false;
   try {
     // Ненастроенная почта не бросает ошибку, а честно отвечает sent: false —
@@ -350,17 +460,17 @@ app.delete('/api/admin/staff/:id', requireAdmin, (req, res) => {
 // ---------- Восстановление пароля ----------
 
 const RESET_TTL_MIN = 60;
-const lastResetRequest = new Map(); // email -> timestamp (защита от спама)
 
-app.post('/api/forgot-password', async (req, res) => {
+// Одна ссылка на адрес в минуту. Счёт ведёт общий механизм ограничений: он сам
+// подчищает за собой, а прежняя карта в памяти росла от каждого запроса.
+const limitForgotByEmail = rateLimit({
+  name: 'forgot-email', limit: 1, windowMs: 60 * 1000, by: bodyEmail,
+  message: 'Ссылка уже запрошена — проверьте почту или подождите минуту',
+});
+
+app.post('/api/forgot-password', limitForgot, limitForgotByEmail, async (req, res) => {
   const email = String(req.body?.email || '').toLowerCase().trim();
   if (!email) return res.status(400).json({ error: 'Укажите email' });
-
-  const prev = lastResetRequest.get(email);
-  if (prev && Date.now() - prev < 60 * 1000) {
-    return res.status(429).json({ error: 'Ссылка уже запрошена — проверьте почту или подождите минуту' });
-  }
-  lastResetRequest.set(email, Date.now());
 
   const user = db.prepare('SELECT id, email FROM users WHERE email = ?').get(email);
   // Ответ всегда одинаковый, чтобы нельзя было проверить, зарегистрирован ли email
@@ -371,9 +481,9 @@ app.post('/api/forgot-password', async (req, res) => {
   db.prepare(`INSERT INTO password_resets (token, user_id, expires_at)
     VALUES (?, ?, datetime('now', '+${RESET_TTL_MIN} minutes'))`).run(token, user.id);
 
-  const base = `${req.protocol}://${req.get('host')}`;
-  const link = `${base}/reset.html?token=${token}`;
-  console.log(`[reset] Ссылка для сброса пароля ${user.email}: ${link}`);
+  const link = `${publicBase(req)}/reset.html?token=${token}`;
+  // Ссылка сброса в лог не попадает: она равносильна паролю в течение часа
+  console.log(`[reset] запрошен сброс пароля: ${user.email}`);
   try {
     await sendMail({
       to: user.email,
@@ -396,7 +506,7 @@ app.get('/api/reset-password/:token', (req, res) => {
   res.json({ valid: !!row });
 });
 
-app.post('/api/reset-password', (req, res) => {
+app.post('/api/reset-password', limitReset, async (req, res) => {
   const { token, password } = req.body || {};
   const row = db.prepare(`SELECT token, user_id FROM password_resets
     WHERE token = ? AND used = 0 AND expires_at > datetime('now')`).get(String(token || ''));
@@ -404,11 +514,17 @@ app.post('/api/reset-password', (req, res) => {
   if (!password || password.length < 6) return res.status(400).json({ error: 'Пароль минимум 6 символов' });
 
   const salt = crypto.randomBytes(16).toString('hex');
-  db.prepare('UPDATE users SET pass_hash = ?, pass_salt = ? WHERE id = ?')
-    .run(hashPassword(password, salt), salt, row.user_id);
-  db.prepare('UPDATE password_resets SET used = 1 WHERE token = ?').run(row.token);
-  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(row.user_id); // разлогинить все устройства
-  res.json({ ok: true });
+  try {
+    const hash = await hashPassword(password, salt);
+    db.prepare('UPDATE users SET pass_hash = ?, pass_salt = ? WHERE id = ?').run(hash, salt, row.user_id);
+    db.prepare('UPDATE password_resets SET used = 1 WHERE token = ?').run(row.token);
+    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(row.user_id); // разлогинить все устройства
+    // Остальные выданные ссылки гасим: восстановление уже состоялось
+    db.prepare('UPDATE password_resets SET used = 1 WHERE user_id = ? AND used = 0').run(row.user_id);
+    res.json({ ok: true });
+  } catch (e) {
+    handleAuthError(res, e);
+  }
 });
 
 // ---------- Публичные данные ----------
@@ -510,7 +626,14 @@ const PAYOUT_TYPES = {
   atm: 'Банкомат',
 };
 
-app.post('/api/orders', requireAuth, (req, res) => {
+// Заявка уходит уведомлением в Telegram, поэтому поток заявок с одной учётки —
+// это ещё и поток сообщений оператору. Живому клиенту двадцати в час хватает.
+const limitOrders = rateLimit({
+  name: 'orders', limit: 20, windowMs: 60 * MINUTE, by: req => req.user?.id ?? '',
+  message: 'Слишком много заявок подряд. Напишите нам в Telegram — оператор поможет.',
+});
+
+app.post('/api/orders', requireAuth, limitOrders, (req, res) => {
   const { direction_id, amount_from, contact, requisites, comment, payment_channel } = req.body || {};
   const b = req.body || {};
   const dir = db.prepare('SELECT * FROM directions WHERE id = ? AND enabled = 1').get(Number(direction_id));
@@ -701,7 +824,30 @@ app.get('/api/orders', requireAuth, (req, res) => {
 // ---------- Верификация клиента ----------
 
 const VERIFY_STATUSES = ['none', 'pending', 'approved', 'rejected'];
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+
+// Сколько всего места разрешено занимать вложениям. Диск сервера — один гигабайт,
+// и на нём же лежит база. Без этого предела достаточно нескольких десятков
+// регистраций с фотографиями, чтобы диск кончился и сайт перестал писать вообще.
+const MAX_UPLOADS_BYTES = 400 * 1024 * 1024;
+
+// Занятое вложениями место. Считается один раз при запуске и дальше ведётся
+// по ходу дела: перечитывать каталог на каждую загрузку незачем.
+let uploadsBytes = 0;
+try {
+  for (const name of fs.readdirSync(uploadsDir)) {
+    uploadsBytes += fs.statSync(path.join(uploadsDir, name)).size;
+  }
+} catch (_) { /* каталога ещё нет */ }
+
+// Подпись формата в первых байтах файла. Расширение и заголовок data-URL
+// присылает клиент, а это — то, чем файл является на самом деле.
+function looksLikeImage(buf, kind) {
+  if (kind === 'png') return buf.length > 8 && buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  if (kind === 'jpg') return buf.length > 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
+  if (kind === 'webp') return buf.length > 12 && buf.subarray(0, 4).toString('latin1') === 'RIFF' && buf.subarray(8, 12).toString('latin1') === 'WEBP';
+  return false;
+}
 
 // Принимает data-URL картинки, шифрует (AES-256-GCM) и сохраняет в data/uploads
 function saveImage(dataUrl, prefix) {
@@ -709,10 +855,17 @@ function saveImage(dataUrl, prefix) {
   if (!m) return { error: 'Файл должен быть картинкой (JPG, PNG или WebP)' };
   const buf = Buffer.from(m[2], 'base64');
   if (buf.length < 1000) return { error: 'Файл слишком маленький или повреждён' };
-  if (buf.length > MAX_IMAGE_BYTES) return { error: 'Файл больше 10 МБ' };
+  if (buf.length > MAX_IMAGE_BYTES) return { error: 'Файл больше 8 МБ' };
   const ext = m[1] === 'jpeg' ? 'jpg' : m[1];
+  if (!looksLikeImage(buf, ext)) return { error: 'Это не картинка — сохраните фото заново и попробуйте ещё раз' };
+  if (uploadsBytes + buf.length > MAX_UPLOADS_BYTES) {
+    console.error('[uploads] место под вложения кончилось — загрузка отклонена');
+    return { error: 'Хранилище переполнено, напишите нам в Telegram' };
+  }
   const name = `${prefix}-${crypto.randomBytes(8).toString('hex')}.${ext}.enc`;
-  fs.writeFileSync(path.join(uploadsDir, name), encryptBuffer(buf));
+  const encrypted = encryptBuffer(buf);
+  fs.writeFileSync(path.join(uploadsDir, name), encrypted);
+  uploadsBytes += encrypted.length;
   // Отпечаток исходной картинки, чтобы поймать подмену файла на диске
   return { name, hash: hashBuffer(buf) };
 }
@@ -731,7 +884,12 @@ function readUpload(name) {
 function deleteUpload(name) {
   if (!name) return;
   const p = path.join(uploadsDir, path.basename(name));
-  try { fs.unlinkSync(p); } catch (_) {}
+  try {
+    // Размер снимается до удаления: из него ведётся счёт занятого места
+    const { size } = fs.statSync(p);
+    fs.unlinkSync(p);
+    uploadsBytes = Math.max(0, uploadsBytes - size);
+  } catch (_) {}
 }
 
 app.get('/api/verification', requireAuth, (req, res) => {
@@ -743,7 +901,14 @@ app.get('/api/verification', requireAuth, (req, res) => {
   });
 });
 
-app.post('/api/verification', requireAuth, (req, res) => {
+// Каждая отправка кладёт на диск две картинки. Прежние удаляются, но перебирать
+// их без счёта незачем: пять попыток в сутки покрывают любую переснятую фотографию.
+const limitVerification = rateLimit({
+  name: 'verification', limit: 5, windowMs: 24 * 60 * MINUTE, by: req => req.user?.id ?? '',
+  message: 'Сегодня документы отправлялись уже пять раз. Напишите нам в Telegram.',
+});
+
+app.post('/api/verification', requireAuth, limitVerification, (req, res) => {
   const u = db.prepare('SELECT verify_status, verify_passport, verify_selfie FROM users WHERE id = ?').get(req.user.id);
   if (u.verify_status === 'approved') return res.status(400).json({ error: 'Верификация уже пройдена' });
 
@@ -766,7 +931,7 @@ app.post('/api/verification', requireAuth, (req, res) => {
     full_name = ?, phone = ?, telegram = ? WHERE id = ?`)
     .run(passport.name, selfie.name, fullName, phone, telegram, req.user.id);
   // Ссылка открывает админку сразу на вкладке верификации, где ждёт заявка
-  const verifyLink = `${req.protocol}://${req.get('host')}/admin.html#verify`;
+  const verifyLink = `${publicBase(req)}/admin.html#verify`;
   notifyAdminSafe(`🪪 <b>Новая верификация</b>\n${escapeHtml(fullName)}\n${escapeHtml(req.user.email)}\n` +
     `Телефон: ${escapeHtml(phone)}\nTelegram: @${escapeHtml(telegram)}\n\n` +
     `<a href="${verifyLink}">Проверить в админке</a>`);
@@ -876,7 +1041,14 @@ app.get('/api/chat/messages', requireAuth, (req, res) => {
   res.json({ messages: rows });
 });
 
-app.post('/api/chat/messages', requireAuth, (req, res) => {
+// Сообщение весит до ста килобайт и ложится в базу. Переписке живого человека
+// две сотни в час не мешают, а забить базу ими уже не выйдет.
+const limitChat = rateLimit({
+  name: 'chat', limit: 200, windowMs: 60 * MINUTE, by: req => req.user?.id ?? '',
+  message: 'Слишком много сообщений подряд, подождите немного',
+});
+
+app.post('/api/chat/messages', requireAuth, limitChat, (req, res) => {
   const { iv, ciphertext } = req.body || {};
   if (typeof iv !== 'string' || typeof ciphertext !== 'string' || !iv || !ciphertext) {
     return res.status(400).json({ error: 'Пустое сообщение' });
@@ -1049,7 +1221,7 @@ app.get('/api/admin/settings', requireAdmin, (req, res) => {
     // Готовые строки для .env бота: администратор копирует их одной кнопкой.
     // Токен виден только ему — эндпоинт закрыт requireAdmin.
     agent_env: [
-      `SITE_URL=${req.protocol}://${req.get('host')}`,
+      `SITE_URL=${publicBase(req)}`,
       `AGENT_API_TOKEN=${getSetting('agent_token') || ''}`,
     ].join('\n'),
     // Когда бот последний раз присылал курсы
@@ -1100,6 +1272,10 @@ app.patch('/api/admin/settings', requireAdmin, (req, res) => {
 // Данные клиентов живут на сервере, но владелец хочет держать копию у себя.
 // Доступ по отдельному паролю, а не по входу в админку: скрипт выгрузки
 // работает по расписанию, и хранить ради него пароль от админки незачем.
+// Токен подбирать бессмысленно — он случайный и длинный, — но попытки всё равно
+// считаем: так подбор не превращается ещё и в нагрузку на сервер.
+const limitTokenAuth = rateLimit({ name: 'token-auth', limit: 30, windowMs: 15 * MINUTE });
+
 function requireBackupToken(req, res, next) {
   const expected = (getSetting('backup_token') || '').trim();
   if (!expected) return res.status(503).json({ error: 'Токен выгрузки не задан' });
@@ -1120,7 +1296,7 @@ function purgeAfterDays() {
 
 // Снимок базы целиком. VACUUM INTO делает согласованную копию на ходу —
 // простое копирование файла во время записи дало бы битую базу.
-app.get('/api/admin/backup/db', requireBackupToken, (req, res) => {
+app.get('/api/admin/backup/db', limitTokenAuth, requireBackupToken, (req, res) => {
   const snapshot = path.join(os.tmpdir(), `kometa-backup-${crypto.randomBytes(6).toString('hex')}.db`);
   try {
     // Момент снимка едет вместе с файлом: по нему потом определяется, что
@@ -1144,7 +1320,7 @@ app.get('/api/admin/backup/db', requireBackupToken, (req, res) => {
 
 // Список вложений верификации. Файлы уже зашифрованы на диске и такими же
 // уезжают на компьютер: ключ лежит отдельно, в переменных сервера.
-app.get('/api/admin/backup/files', requireBackupToken, (req, res) => {
+app.get('/api/admin/backup/files', limitTokenAuth, requireBackupToken, (req, res) => {
   try {
     const files = fs.readdirSync(uploadsDir).map(name => ({
       name,
@@ -1156,7 +1332,7 @@ app.get('/api/admin/backup/files', requireBackupToken, (req, res) => {
   }
 });
 
-app.get('/api/admin/backup/file/:name', requireBackupToken, (req, res) => {
+app.get('/api/admin/backup/file/:name', limitTokenAuth, requireBackupToken, (req, res) => {
   // basename отрезает любые попытки выйти из папки вложений
   const file = path.join(uploadsDir, path.basename(req.params.name));
   if (!fs.existsSync(file)) return res.status(404).json({ error: 'Файл не найден' });
@@ -1167,7 +1343,7 @@ app.get('/api/admin/backup/file/:name', requireBackupToken, (req, res) => {
 // Подтверждение, что копия доехала. Только после него сервер что-либо стирает:
 // пока владелец не сказал «получил», данные лежат на месте, чем бы ни
 // закончилась выгрузка.
-app.post('/api/admin/backup/confirm', requireBackupToken, (req, res) => {
+app.post('/api/admin/backup/confirm', limitTokenAuth, requireBackupToken, (req, res) => {
   const snapshotAt = String(req.body?.snapshot_at || '').trim();
   // Без момента снимка непонятно, что именно подтверждают.
   if (!snapshotAt || Number.isNaN(Date.parse(snapshotAt))) {
@@ -1185,9 +1361,9 @@ app.post('/api/admin/backup/confirm', requireBackupToken, (req, res) => {
   for (const row of decided) {
     for (const name of [row.verify_passport, row.verify_selfie]) {
       if (!name || !received.has(path.basename(name))) continue;
-      const file = path.join(uploadsDir, path.basename(name));
-      if (!fs.existsSync(file)) continue;
-      try { fs.unlinkSync(file); photos++; } catch (_) { /* удалим в следующий раз */ }
+      if (!fs.existsSync(path.join(uploadsDir, path.basename(name)))) continue;
+      deleteUpload(name);
+      photos++;
     }
   }
 
@@ -1206,7 +1382,7 @@ app.post('/api/admin/backup/confirm', requireBackupToken, (req, res) => {
 // Курсы, присланные ботом. Оператор проверяет курс в Telegram, бот отправляет
 // сюда весь набор, и сайт считает по нему до следующей проверки. Так связка
 // работает, даже когда бот запущен не на сервере, а у оператора.
-app.post('/api/agent/rates', (req, res) => {
+app.post('/api/agent/rates', limitTokenAuth, (req, res) => {
   const expected = (getSetting('agent_token') || '').trim();
   if (!expected) return res.status(503).json({ error: 'Токен агента не задан в админке' });
   const supplied = String(req.headers['x-agent-token'] || '').trim();
@@ -1288,23 +1464,26 @@ app.post('/api/admin/test-mail', requireAdmin, async (req, res) => {
   }
 });
 
-app.post('/api/admin/password', requireAdmin, (req, res) => {
+app.post('/api/admin/password', requireAdmin, async (req, res) => {
   const { current_password, new_password } = req.body || {};
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-  if (hashPassword(String(current_password || ''), user.pass_salt) !== user.pass_hash) {
-    return res.status(400).json({ error: 'Текущий пароль неверный' });
+  try {
+    if (!await verifyPassword(String(current_password || ''), user.pass_salt, user.pass_hash)) {
+      return res.status(400).json({ error: 'Текущий пароль неверный' });
+    }
+    if (!new_password || new_password.length < 8) {
+      return res.status(400).json({ error: 'Новый пароль минимум 8 символов' });
+    }
+    const salt = crypto.randomBytes(16).toString('hex');
+    const hash = await hashPassword(new_password, salt);
+    db.prepare('UPDATE users SET pass_hash = ?, pass_salt = ? WHERE id = ?').run(hash, salt, user.id);
+    // Разлогинить все остальные сессии этого пользователя
+    db.prepare('DELETE FROM sessions WHERE user_id = ? AND token != ?')
+      .run(user.id, sessionCookieToken(req) || '');
+    res.json({ ok: true });
+  } catch (e) {
+    handleAuthError(res, e);
   }
-  if (!new_password || new_password.length < 8) {
-    return res.status(400).json({ error: 'Новый пароль минимум 8 символов' });
-  }
-  const salt = crypto.randomBytes(16).toString('hex');
-  db.prepare('UPDATE users SET pass_hash = ?, pass_salt = ? WHERE id = ?')
-    .run(hashPassword(new_password, salt), salt, user.id);
-  // Разлогинить все остальные сессии этого пользователя
-  const cookie = req.headers.cookie || '';
-  const match = cookie.match(/(?:^|;\s*)sid=([a-f0-9]{64})/);
-  db.prepare('DELETE FROM sessions WHERE user_id = ? AND token != ?').run(user.id, match ? match[1] : '');
-  res.json({ ok: true });
 });
 
 app.post('/api/admin/rates/refresh', requireAdmin, async (req, res) => {
@@ -1316,7 +1495,33 @@ app.post('/api/admin/rates/refresh', requireAdmin, async (req, res) => {
   }
 });
 
+// ---------- Уборка ----------
+
+// Сколько дней держим записи о посещениях. Статистика считается по неделям и
+// месяцам, годовалые строки не нужны никому, а место на диске занимают.
+const VISITS_KEEP_DAYS = 400;
+
+// Всё, что накапливается само и никем не удаляется: просроченные сессии,
+// использованные ссылки восстановления, старые записи счётчика посещений.
+// Без этого диск в один гигабайт кончается тихо и в самый неудобный момент.
+function housekeeping() {
+  try {
+    sweepSessions();
+    const links = db.prepare(`DELETE FROM password_resets
+      WHERE used = 1 OR expires_at <= datetime('now', '-7 days')`).run().changes;
+    if (links) console.log(`[uborka] отработавших ссылок восстановления удалено: ${links}`);
+    const visits = db.prepare(`DELETE FROM visits
+      WHERE created_at < datetime('now', '-${VISITS_KEEP_DAYS} days')`).run().changes;
+    if (visits) console.log(`[uborka] старых записей посещений удалено: ${visits}`);
+  } catch (e) {
+    // Уборка не должна мешать работе сайта: не вышло — повторим завтра
+    console.error('[uborka] не удалась:', e.message);
+  }
+}
+
 // ---------- Запуск ----------
 
+housekeeping();
+setInterval(housekeeping, 24 * 60 * 60 * 1000).unref();
 startAutoRefresh();
 app.listen(PORT, () => console.log(`[server] http://localhost:${PORT}`));

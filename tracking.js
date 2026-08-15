@@ -8,6 +8,7 @@
 
 const crypto = require('crypto');
 const { db, getSetting } = require('./db');
+const { clientIp } = require('./security');
 
 // Часовой пояс проекта: касса работает в Таиланде, статистика считается по нему
 const TZ_SHIFT = process.env.STATS_TZ_SHIFT || '+7 hours';
@@ -28,10 +29,11 @@ const EVENTS = ['visit', 'exchange_click', 'telegram_click'];
 // Признаки автоматических обходчиков в User-Agent
 const BOT_PATTERN = /bot|crawler|spider|slurp|curl|wget|python-requests|httpclient|headless|phantom|puppeteer|playwright|monitor|uptime|pingdom|lighthouse|preview|facebookexternalhit|telegrambot|whatsapp|vkshare|yandex\.com\/bots/i;
 
-// Соль для хеша IP берётся из ключа шифрования файлов: он уже лежит вне базы,
-// поэтому по украденной базе восстановить адреса нельзя
+// Соль для хеша IP: случайная и своя у каждой установки. С общей строкой хеш
+// не защищал бы ничего — весь диапазон адресов перебирается за минуты, и адрес
+// посетителя восстанавливается по таблице.
 function ipSalt() {
-  return process.env.UPLOADS_KEY || getSetting('ip_salt') || 'kometa-ip-salt';
+  return getSetting('ip_salt') || process.env.UPLOADS_KEY || 'kometa-ip-salt';
 }
 
 function hashIp(ip) {
@@ -102,7 +104,7 @@ function recordEvent(req, res, { ref, event, path } = {}) {
   db.prepare(`
     INSERT INTO visits (visitor, ref, event, is_new, path, ip_hash)
     VALUES (?, ?, ?, ?, ?, ?)
-  `).run(visitor, source, type, isNew, String(path || '').slice(0, 200), hashIp(req.ip));
+  `).run(visitor, source, type, isNew, String(path || '').slice(0, 200), hashIp(clientIp(req)));
 
   return { recorded: true, visitor, ref: source, event: type, is_new: !!isNew };
 }

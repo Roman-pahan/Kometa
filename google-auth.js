@@ -99,8 +99,12 @@ async function exchangeCode(req, code) {
 
   const claims = readIdToken(data.id_token);
   if (!claims || !claims.email) throw new Error('Google не вернул почту');
-  // Непроверенная почта не годится: иначе чужим адресом можно занять аккаунт
-  if (claims.email_verified === false) throw new Error('Почта в аккаунте Google не подтверждена');
+  // Почта должна быть подтверждена явно. Проверка именно на «истину», а не на
+  // «не ложь»: отсутствующий признак — тоже неподтверждённая почта, а по чужому
+  // адресу входят в чужой кабинет.
+  if (claims.email_verified !== true && String(claims.email_verified) !== 'true') {
+    throw new Error('Почта в аккаунте Google не подтверждена');
+  }
   return { email: String(claims.email).toLowerCase().trim(), name: String(claims.name || '').trim() };
 }
 

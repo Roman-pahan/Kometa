@@ -1,6 +1,8 @@
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const Database = require('better-sqlite3');
+const secure = require('./secure-store');
 
 const dataDir = path.join(__dirname, 'data');
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
@@ -136,17 +138,73 @@ for (const sql of [
   "ALTER TABLE orders ADD COLUMN attachment_hash TEXT",
   // Печать целостности заявки: считается при создании и больше не меняется
   "ALTER TABLE orders ADD COLUMN seal TEXT",
+  // Срок жизни сессии. Без него украденная кука работала бы вечно.
+  'ALTER TABLE sessions ADD COLUMN expires_at TEXT',
+  // Когда сессией пользовались в последний раз: по нему срок продлевается
+  'ALTER TABLE sessions ADD COLUMN used_at TEXT',
 ]) {
   try { db.exec(sql); } catch (_) { /* колонка уже существует */ }
 }
 
+// Сессиям, заведённым до появления срока, он проставляется от даты создания —
+// ровно тот месяц, который был обещан куке. Никто не разлогинивается досрочно.
+db.exec(`UPDATE sessions SET expires_at = datetime(created_at, '+30 days') WHERE expires_at IS NULL`);
+db.exec('DELETE FROM sessions WHERE expires_at <= datetime(\'now\')');
+db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at)');
+
+// ---------- Настройки ----------
+
+// Настройки, которые по сути являются паролями. В снимке базы они не должны
+// читаться глазами: копия базы уезжает на компьютер владельца и в бэкапы.
+const SECRET_SETTINGS = new Set([
+  'smtp_pass', 'tg_bot_token', 'google_client_secret', 'agent_token', 'backup_token', 'ip_salt',
+]);
+
+// Шифровать секреты можно только ключом, который переживёт перезапуск.
+// Иначе после ближайшего деплоя расшифровать их будет нечем, и разом отвалятся
+// почта, бот и связь с агентом. Пока ключ ненадёжен — храним как раньше.
+const ENCRYPT_SECRETS = secure.keyIsPersistent();
+
 function getSetting(key, def = null) {
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
-  return row ? row.value : def;
+  if (!row) return def;
+  return SECRET_SETTINGS.has(key) ? secure.decryptSecret(row.value, key) : row.value;
 }
+
 function setSetting(key, value) {
+  const text = String(value);
+  const stored = SECRET_SETTINGS.has(key) && ENCRYPT_SECRETS && text ? secure.encryptSecret(text) : text;
   db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
-    .run(key, String(value));
+    .run(key, stored);
+}
+
+// Смена ключа — событие, о котором надо знать: всё, что было им зашифровано,
+// перестало читаться. Отпечаток хранится рядом и сверяется при каждом запуске.
+{
+  const seen = db.prepare("SELECT value FROM settings WHERE key = 'key_fingerprint'").get();
+  const current = secure.keyFingerprint();
+  if (!seen) {
+    db.prepare("INSERT INTO settings (key, value) VALUES ('key_fingerprint', ?)").run(current);
+  } else if (seen.value !== current) {
+    console.error('[db] ВНИМАНИЕ: ключ шифрования сменился. Прежние фото верификации '
+      + 'и зашифрованные настройки больше не читаются. Проверьте UPLOADS_KEY и data/secret.key.');
+    db.prepare("UPDATE settings SET value = ? WHERE key = 'key_fingerprint'").run(current);
+  }
+}
+
+// Миграция: секреты, сохранённые до появления шифрования, дошифровываются на месте
+if (ENCRYPT_SECRETS) {
+  let sealed = 0;
+  for (const key of SECRET_SETTINGS) {
+    const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+    if (!row || !row.value || secure.isEncryptedSecret(row.value)) continue;
+    db.prepare('UPDATE settings SET value = ? WHERE key = ?').run(secure.encryptSecret(row.value), key);
+    sealed++;
+  }
+  if (sealed) console.log(`[db] секретов зашифровано в базе: ${sealed}`);
+} else {
+  console.warn('[db] ключ шифрования непостоянный — секреты в базе остаются открытым текстом. '
+    + 'Задайте UPLOADS_KEY в переменных окружения.');
 }
 
 // Первичное наполнение направлений обмена
@@ -256,6 +314,10 @@ if (!getSetting('backup_token')) {
   setSetting('backup_token', require('crypto').randomBytes(24).toString('hex'));
   console.log('[db] создан токен выгрузки — он показан в админке, в настройках');
 }
+
+// Соль для хеша IP посетителей. Случайная и своя: с общей строкой хеш
+// перебирается по всему диапазону адресов за минуты, и обезличивание мнимое.
+if (!getSetting('ip_salt')) setSetting('ip_salt', crypto.randomBytes(24).toString('hex'));
 
 if (getSetting('telegram_username') === null) setSetting('telegram_username', 'Kometa_ex');
 // Миграция: связь с клиентами переехала на канал обменника.

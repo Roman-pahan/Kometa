@@ -268,6 +268,16 @@
           </div>
           <div class="msg" id="pwMsg"></div>
           <button class="btn danger" id="changePwBtn">Сменить пароль</button>
+          <p class="muted small mt">Смена пароля закрывает вход на всех остальных устройствах.</p>
+        </div>
+
+        <div class="card mt">
+          <h2 style="font-size:18px">Открытые входы</h2>
+          <p class="muted small mt">Вход хранится месяц и продлевается, пока вы пользуетесь админкой.
+            Если админка осталась открытой на чужом компьютере — закройте все входы: сюда придётся
+            зайти заново, зато чужая вкладка перестанет работать.</p>
+          <div class="msg" id="sessionsMsg"></div>
+          <button class="btn danger" id="logoutEverywhereBtn">Закрыть все входы</button>
         </div>
       </div>
     </section>
@@ -972,6 +982,16 @@
         document.getElementById('pwCurrent').value = '';
         document.getElementById('pwNew').value = '';
         showMsg(msg, 'Пароль изменён', 'ok');
+      } catch (e) { showMsg(msg, e.message); }
+    };
+
+    document.getElementById('logoutEverywhereBtn').onclick = async () => {
+      const msg = document.getElementById('sessionsMsg');
+      hideMsg(msg);
+      if (!confirm('Закрыть все входы, включая этот? Придётся войти заново.')) return;
+      try {
+        await api('/api/logout-everywhere', 'POST', {});
+        location.href = '/auth.html';
       } catch (e) { showMsg(msg, e.message); }
     };
 

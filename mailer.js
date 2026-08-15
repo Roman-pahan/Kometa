@@ -27,8 +27,9 @@ function isConfigured() {
 async function sendMail({ to, subject, html, text }) {
   const cfg = smtpConfig();
   if (!cfg) {
+    // Тело письма в лог не выводится: в письмах бывают ссылки восстановления,
+    // а по такой ссылке входят в учётную запись. Логи хранятся дольше письма.
     console.log(`[mail] SMTP не настроен. Письмо для ${to} (${subject}) не отправлено.`);
-    if (text) console.log(`[mail] Содержимое: ${text}`);
     return { sent: false, reason: 'SMTP не настроен' };
   }
   const transport = nodemailer.createTransport({
