@@ -253,7 +253,7 @@ test('ручной курс из админки старше цены бота',
   assert.equal(dir.rate_source, 'bot', 'до правки цена приходит из бота');
 
   const patched = await asAdmin('/api/admin/directions/' + dir.id, {
-    method: 'PATCH', body: JSON.stringify({ ...dir, manual_rate: 2.5 }),
+    method: 'PATCH', body: JSON.stringify({ ...dir, price_mode: 'manual', manual_rate: 2.5 }),
   });
   assert.equal(patched.status, 200);
 
@@ -262,9 +262,21 @@ test('ручной курс из админки старше цены бота',
 
   // Возвращаем направление боту
   await asAdmin('/api/admin/directions/' + dir.id, {
-    method: 'PATCH', body: JSON.stringify({ ...dir, manual_rate: '' }),
+    method: 'PATCH', body: JSON.stringify({ ...dir, price_mode: 'bot', manual_rate: '' }),
   });
   assert.equal(dirOf((await json('/api/public')).data.directions, 'THB', 'RUB').rate, 2.91);
+
+  // Прежний способ — прислать один только курс, без режима — тоже работает
+  await asAdmin('/api/admin/directions/' + dir.id, {
+    method: 'PATCH', body: JSON.stringify({ manual_rate: 2.4 }),
+  });
+  assert.equal(dirOf((await json('/api/public')).data.directions, 'THB', 'RUB').rate, 2.4,
+    'ручной курс без указания режима по-прежнему переключает направление');
+  await asAdmin('/api/admin/directions/' + dir.id, {
+    method: 'PATCH', body: JSON.stringify({ manual_rate: '' }),
+  });
+  assert.equal(dirOf((await json('/api/public')).data.directions, 'THB', 'RUB').rate, 2.91,
+    'и пустой курс возвращает направление боту');
 });
 
 test('у каждого способа отправки свой курс, а тезер через QR не купить', async () => {
@@ -379,4 +391,45 @@ test('в карточке направления видна маржа, кото
   assert.deepEqual(find('THB', 'USDT').margin, { all: 1.5 });
   assert.deepEqual(find('THB', 'CNY').margin, { all: 4 });
   assert.deepEqual(find('RUB', 'CNY').margin, { all: 4 });
+});
+
+test('своя маржа считает цену от себестоимости', async () => {
+  const dirs = (await asAdmin('/api/admin/directions')).data.directions;
+  const dir = dirs.find(d => d.from_cur === 'THB' && d.to_cur === 'RUB');
+  // Себестоимость — тот самый справочный кросс-курс: 97 ₽ за USDT / 33 ฿ за USDT
+  const cost = dir.base_rate;
+  assert.ok(cost > 0, 'себестоимость известна');
+
+  const saved = await asAdmin('/api/admin/directions/' + dir.id, {
+    method: 'PATCH', body: JSON.stringify({ ...dir, price_mode: 'margin', markup_pct: 5, manual_rate: '' }),
+  });
+  assert.equal(saved.status, 200, saved.data.error);
+
+  const shown = dirOf((await json('/api/public')).data.directions, 'THB', 'RUB');
+  assert.ok(Math.abs(shown.rate - cost * 0.95) < 1e-6,
+    `клиент получает на 5% меньше себестоимости: ждали ${cost * 0.95}, показано ${shown.rate}`);
+  assert.equal(shown.on_request, false);
+  // Способы отправки в этом режиме не различаются
+  assert.equal(shown.channel_rates, null, 'своя маржа — одна цена на все каналы');
+
+  const back = (await asAdmin('/api/admin/directions')).data.directions.find(d => d.id === dir.id);
+  assert.equal(back.rate_source, 'margin', 'админка показывает, чем назначена цена');
+
+  // Возвращаем боту
+  await asAdmin('/api/admin/directions/' + dir.id, {
+    method: 'PATCH', body: JSON.stringify({ ...dir, price_mode: 'bot', manual_rate: '' }),
+  });
+  assert.equal(dirOf((await json('/api/public')).data.directions, 'THB', 'RUB').rate, 2.91);
+});
+
+test('маржа без себестоимости не выдумывает курс', async () => {
+  const dirs = (await asAdmin('/api/admin/directions')).data.directions;
+  // Юань бот в этом наборе не присылал — считать не от чего
+  const dir = dirs.find(d => d.from_cur === 'THB' && d.to_cur === 'CNY');
+  await asAdmin('/api/admin/directions/' + dir.id, {
+    method: 'PATCH', body: JSON.stringify({ ...dir, price_mode: 'margin', markup_pct: 4, manual_rate: '' }),
+  });
+  const shown = dirOf((await json('/api/public')).data.directions, 'THB', 'CNY');
+  assert.equal(shown.rate, null, 'без себестоимости цены нет');
+  assert.equal(shown.on_request, true, 'направление честно уходит в «по запросу»');
 });

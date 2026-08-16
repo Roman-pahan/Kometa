@@ -1298,6 +1298,12 @@ function directionFields(body) {
     markup_pct: Number(body.markup_pct) || 0,
     manual_rate: body.manual_rate === null || body.manual_rate === '' || body.manual_rate === undefined
       ? null : Number(body.manual_rate),
+    // Режим берём как прислали. Если его не прислали вовсе, но задан курс —
+    // это старое обращение к API, где ручной курс сам по себе означал ручной
+    // режим; такие вызовы должны работать по-прежнему.
+    price_mode: ['bot', 'margin', 'manual'].includes(body.price_mode)
+      ? body.price_mode
+      : (Number(body.manual_rate) > 0 ? 'manual' : 'bot'),
     min_from: Number(body.min_from) || 0,
     max_from: Number(body.max_from) || 0,
     enabled: body.enabled ? 1 : 0,
@@ -1310,8 +1316,8 @@ app.post('/api/admin/directions', requireAdmin, (req, res) => {
   if (!f.from_cur || !f.to_cur) return res.status(400).json({ error: 'Укажите валюты (например THB и RUB)' });
   if (!f.label) f.label = `${f.from_cur} → ${f.to_cur}`;
   const info = db.prepare(`
-    INSERT INTO directions (from_cur, to_cur, label, payment_note, markup_pct, manual_rate, min_from, max_from, enabled, sort)
-    VALUES (@from_cur, @to_cur, @label, @payment_note, @markup_pct, @manual_rate, @min_from, @max_from, @enabled, @sort)
+    INSERT INTO directions (from_cur, to_cur, label, payment_note, markup_pct, manual_rate, min_from, max_from, enabled, sort, price_mode)
+    VALUES (@from_cur, @to_cur, @label, @payment_note, @markup_pct, @manual_rate, @min_from, @max_from, @enabled, @sort, @price_mode)
   `).run(f);
   res.json({ ok: true, id: info.lastInsertRowid });
 });
@@ -1319,11 +1325,17 @@ app.post('/api/admin/directions', requireAdmin, (req, res) => {
 app.patch('/api/admin/directions/:id', requireAdmin, (req, res) => {
   const dir = db.prepare('SELECT * FROM directions WHERE id = ?').get(Number(req.params.id));
   if (!dir) return res.status(404).json({ error: 'Направление не найдено' });
-  const f = directionFields({ ...dir, ...req.body, enabled: req.body.enabled ?? !!dir.enabled });
+  // Режим либо назван в запросе, либо выводится из него же: прежний способ
+  // «прислать ручной курс и этим переключить направление» должен работать
+  // и дальше, поэтому смотрим именно на тело запроса, а не на слитую строку.
+  const askedMode = req.body.price_mode
+    ?? (Number(req.body.manual_rate) > 0 ? 'manual'
+      : (req.body.manual_rate === '' || req.body.manual_rate === null ? 'bot' : dir.price_mode));
+  const f = directionFields({ ...dir, ...req.body, price_mode: askedMode, enabled: req.body.enabled ?? !!dir.enabled });
   db.prepare(`
     UPDATE directions SET from_cur=@from_cur, to_cur=@to_cur, label=@label, payment_note=@payment_note,
       markup_pct=@markup_pct, manual_rate=@manual_rate, min_from=@min_from, max_from=@max_from,
-      enabled=@enabled, sort=@sort WHERE id=@id
+      enabled=@enabled, sort=@sort, price_mode=@price_mode WHERE id=@id
   `).run({ ...f, id: dir.id });
   res.json({ ok: true });
 });

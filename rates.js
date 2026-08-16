@@ -22,6 +22,18 @@ let clientRates = null;
 // Клиент присылает рубли одним из трёх способов, и каждый стоит по-своему.
 let channelRates = null;
 
+// Валюты, себестоимость которых известна от бота: батовая нога от биржи,
+// рублёвая от Т-Банка, юаневая от стакана. USDT тут всегда — он единица счёта.
+//
+// Остальное в таблице курсов приходит из справочника валют и к тому, почём
+// стол реально покупает, отношения не имеет. Считать от такого «курса» свою
+// маржу — тот же способ уйти в минус, от которого мы избавлялись.
+let marketCurrencies = new Set(['USDT']);
+
+function noteMarketCurrency(code, value) {
+  if (Number.isFinite(Number(value)) && Number(value) > 0) marketCurrencies.add(code);
+}
+
 // Направления, где старая цена бессмысленна. Юань стол не котирует постоянно:
 // курс называется по запросу, и показывать вчерашний — обманывать клиента.
 const PERISHABLE_DIRECTIONS = ['RUB_CNY', 'USDT_CNY', 'THB_CNY', 'CNY_RUB', 'CNY_USDT', 'CNY_THB'];
@@ -108,6 +120,9 @@ function applyPushedBoard() {
   channelRates = board.client_channels && typeof board.client_channels === 'object'
     ? mergeChannelRates(board.client_channels, receivedAt)
     : channelRates;
+  noteMarketCurrency('THB', board.usdt_thb);
+  noteMarketCurrency('RUB', board.rub_usdt);
+  noteMarketCurrency('CNY', board.cny_per_usdt);
   if (baseRates) {
     if (board.usdt_thb) baseRates.THB = board.usdt_thb;
     if (board.rub_usdt) baseRates.RUB = board.rub_usdt;
@@ -137,6 +152,9 @@ async function applyMarketRates(rates) {
     if (board.usdt_thb) rates.THB = board.usdt_thb;
     if (board.rub_usdt) rates.RUB = board.rub_usdt;
     if (board.cny_per_usdt) rates.CNY = board.cny_per_usdt;
+    noteMarketCurrency('THB', board.usdt_thb);
+    noteMarketCurrency('RUB', board.rub_usdt);
+    noteMarketCurrency('CNY', board.cny_per_usdt);
     // Цены оператора здесь уже применены при получении набора, повторно их
     // сливать не нужно: иначе у каждой сменится отметка времени.
     marketMargins = board.margins || null;
@@ -247,6 +265,9 @@ function directionMargin(dir) {
 
 // Цены направления по каналам оплаты, если стол их различает.
 function directionChannels(dir) {
+  // Каналы бывают только у ботовой цены: своя маржа и ручной курс — одно
+  // число на все способы отправки.
+  if (dir && dir.price_mode && dir.price_mode !== 'bot') return null;
   if (!channelRates) return null;
   const saved = channelRates[`${dir.from_cur}_${dir.to_cur}`];
   if (!saved) return null;
@@ -261,11 +282,33 @@ function directionChannels(dir) {
 
 // Итоговый курс направления. Канал оплаты, если он выбран и стол различает
 // каналы, задаёт свою цену: QR, Т-Банк и любой банк стоят по-разному.
+// Цена направления. Способов три, и они не смешиваются: либо цену прислал бот,
+// либо сайт считает её от себестоимости с вашей маржой, либо курс вписан руками.
+// Смешение и было прежней бедой — витрина показывала не то, что подтвердил оператор.
 function directionRate(dir, channel) {
   const base = crossRate(dir.from_cur, dir.to_cur);
-  if (dir.manual_rate != null && dir.manual_rate > 0) {
-    return { rate: dir.manual_rate, source: 'manual', base, at: null };
+  const mode = dir.price_mode || (dir.manual_rate != null && dir.manual_rate > 0 ? 'manual' : 'bot');
+
+  if (mode === 'manual') {
+    if (dir.manual_rate != null && dir.manual_rate > 0) {
+      return { rate: dir.manual_rate, source: 'manual', base, at: null };
+    }
+    // Режим выбран, а курс не вписан — врать числом нельзя
+    return { rate: null, source: 'on_request', base, at: null };
   }
+
+  if (mode === 'margin') {
+    // Себестоимость — тот самый справочный кросс-курс из присланных ботом
+    // ног: батовой от биржи, рублёвой от Т-Банка, юаневой от стакана.
+    const percent = Number(dir.markup_pct);
+    const realCost = marketCurrencies.has(dir.from_cur) && marketCurrencies.has(dir.to_cur);
+    if (base && realCost && Number.isFinite(percent) && percent >= 0 && percent < 100) {
+      // Клиент получает меньше, чем по себестоимости, — разница и есть маржа
+      return { rate: base * (1 - percent / 100), source: 'margin', base, at: null };
+    }
+    return { rate: null, source: 'on_request', base, at: null };
+  }
+
   const byChannel = directionChannels(dir);
   if (channel && byChannel && byChannel[channel]) {
     return { rate: byChannel[channel].rate, source: 'bot', base, at: byChannel[channel].at };

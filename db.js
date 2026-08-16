@@ -144,6 +144,9 @@ for (const sql of [
   'ALTER TABLE sessions ADD COLUMN used_at TEXT',
   // Закрытый доступ: учётка остаётся со всей историей, но войти по ней нельзя
   'ALTER TABLE users ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0',
+  // Чем назначается цена направления: bot — присланной ботом, margin — своей
+  // маржой от себестоимости, manual — вписанным вручную курсом
+  "ALTER TABLE directions ADD COLUMN price_mode TEXT NOT NULL DEFAULT 'bot'",
 ]) {
   try { db.exec(sql); } catch (_) { /* колонка уже существует */ }
 }
@@ -153,6 +156,10 @@ for (const sql of [
 db.exec(`UPDATE sessions SET expires_at = datetime(created_at, '+30 days') WHERE expires_at IS NULL`);
 db.exec('DELETE FROM sessions WHERE expires_at <= datetime(\'now\')');
 db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at)');
+
+// Направления, где до появления режимов стоял ручной курс, остаются ручными:
+// прежде наличие manual_rate само по себе означало «считать по нему».
+db.exec("UPDATE directions SET price_mode = 'manual' WHERE manual_rate IS NOT NULL AND manual_rate > 0 AND price_mode = 'bot'");
 
 // ---------- Настройки ----------
 
