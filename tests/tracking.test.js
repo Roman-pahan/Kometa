@@ -464,3 +464,53 @@ test('прямой трафик удалить нельзя', async () => {
   const res = await admin('/api/admin/sources/%20', { method: 'DELETE' });
   assert.equal(res.status, 400, 'сервер отказывается стирать прямой трафик');
 });
+
+test('удалённая метка больше не возвращается', async () => {
+  await admin('/api/admin/sources', { method: 'POST', body: JSON.stringify({ ref: 'zombi', title: 'Зомби' }) });
+
+  // Клиент перешёл по ссылке — метка запомнилась у него в браузере
+  const guest = visitor();
+  await guest('/api/track', { method: 'POST', body: JSON.stringify({ ref: 'zombi', event: 'visit', path: '/' }) });
+  let rows = (await admin('/api/admin/stats')).data.sources;
+  assert.equal(rows.find(s => s.ref === 'zombi').visits, 1);
+
+  // Удаляем ссылку
+  const removed = await admin('/api/admin/sources/zombi', { method: 'DELETE' });
+  assert.equal(removed.status, 200, removed.data.error);
+
+  // Тот же браузер заходит снова — куку он всё ещё несёт
+  await guest('/api/track', { method: 'POST', body: JSON.stringify({ event: 'visit', path: '/' }) });
+  rows = (await admin('/api/admin/stats')).data.sources;
+  assert.equal(rows.find(s => s.ref === 'zombi'), undefined, 'метка не вернулась в таблицу');
+
+  // И переход по самой старой ссылке тоже её не воскрешает
+  const stranger = visitor();
+  await stranger('/api/track', { method: 'POST', body: JSON.stringify({ ref: 'zombi', event: 'visit', path: '/' }) });
+  rows = (await admin('/api/admin/stats')).data.sources;
+  assert.equal(rows.find(s => s.ref === 'zombi'), undefined, 'и по прямому переходу тоже');
+
+  // Эти заходы не потерялись — они просто считаются прямыми
+  const direct = rows.find(s => s.ref === '');
+  assert.ok(direct && direct.visits >= 2, 'заходы учтены как прямой трафик');
+});
+
+test('заведённая заново ссылка снова работает', async () => {
+  await admin('/api/admin/sources', { method: 'POST', body: JSON.stringify({ ref: 'vernuli', title: 'Вернули' }) });
+  const guest = visitor();
+  await guest('/api/track', { method: 'POST', body: JSON.stringify({ ref: 'vernuli', event: 'visit', path: '/' }) });
+  await admin('/api/admin/sources/vernuli', { method: 'DELETE' });
+
+  // Пока метка в отставке — заходы по ней прямые
+  const after = visitor();
+  await after('/api/track', { method: 'POST', body: JSON.stringify({ ref: 'vernuli', event: 'visit', path: '/' }) });
+  assert.equal((await admin('/api/admin/stats')).data.sources.find(s => s.ref === 'vernuli'), undefined);
+
+  // Завели ту же метку заново — она снова считается
+  const again = await admin('/api/admin/sources', { method: 'POST', body: JSON.stringify({ ref: 'vernuli', title: 'Вернули снова' }) });
+  assert.equal(again.status, 200, again.data.error);
+  const back = visitor();
+  await back('/api/track', { method: 'POST', body: JSON.stringify({ ref: 'vernuli', event: 'visit', path: '/' }) });
+  const row = (await admin('/api/admin/stats')).data.sources.find(s => s.ref === 'vernuli');
+  assert.ok(row, 'метка вернулась в строй');
+  assert.equal(row.visits, 1, 'и считает заново, без старых заходов');
+});

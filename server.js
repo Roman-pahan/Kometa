@@ -327,6 +327,8 @@ app.post('/api/admin/sources', requireStats, (req, res) => {
   if (cost != null && !Number.isFinite(cost)) return res.status(400).json({ error: 'Стоимость должна быть числом' });
   const info = db.prepare(`INSERT INTO ad_sources (ref, title, comment, cost, placed_on)
     VALUES (?, ?, ?, ?, ?)`).run(ref, title, String(b.comment || '').trim(), cost, String(b.placed_on || '').trim() || null);
+  // Метку завели заново — значит она снова в деле, даже если раньше её удаляли
+  tracking.reviveRef(ref);
   res.json({ ok: true, id: info.lastInsertRowid, ref, link: tracking.buildLink(ref) });
 });
 
@@ -369,6 +371,8 @@ app.delete('/api/admin/sources/:ref', requireStats, (req, res) => {
     return visits;
   });
   const deleted = remove();
+  // Запоминаем, что метка удалена: иначе браузеры вернут её в тот же день
+  tracking.retireRef(ref);
   console.log(`[stats] удалена метка ${ref}, записей стёрто: ${deleted}`);
   res.json({ ok: true, ref, title: source ? source.title : null, deleted_visits: deleted });
 });

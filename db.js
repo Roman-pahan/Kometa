@@ -106,6 +106,14 @@ CREATE INDEX IF NOT EXISTS idx_visits_ref ON visits(ref, created_at);
 CREATE INDEX IF NOT EXISTS idx_visits_visitor ON visits(visitor, created_at);
 CREATE INDEX IF NOT EXISTS idx_visits_created ON visits(created_at);
 CREATE INDEX IF NOT EXISTS idx_visits_event ON visits(event, created_at);
+
+-- Метки, которые владелец удалил. Браузер помнит метку месяц и продолжает
+-- присылать её после удаления ссылки, поэтому строка появлялась снова — уже
+-- без названия. Такие метки перечислены здесь и в статистику не попадают.
+CREATE TABLE IF NOT EXISTS retired_refs (
+  ref TEXT PRIMARY KEY,
+  retired_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `);
 
 // Миграция: поля верификации у пользователей (ALTER падает, если колонка уже есть)

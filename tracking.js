@@ -53,6 +53,35 @@ function cleanRef(value) {
   return String(value || '').trim().toLowerCase().replace(/[^a-z0-9_\-]/g, '').slice(0, 64);
 }
 
+// ---------- Удалённые метки ----------
+//
+// Браузер помнит метку месяц и продолжает присылать её после того, как ссылку
+// удалили, — строка возвращалась в статистику в тот же день, уже безымянной.
+// Такие метки перечислены в базе, и заходы по ним считаются прямыми.
+//
+// Список держим в памяти: проверка идёт на каждое посещение, а меняется он
+// только руками владельца.
+const retired = new Set(db.prepare('SELECT ref FROM retired_refs').all().map(row => row.ref));
+
+function isRetired(ref) {
+  return !!ref && retired.has(ref);
+}
+
+function retireRef(ref) {
+  const value = cleanRef(ref);
+  if (!value) return;
+  db.prepare('INSERT OR IGNORE INTO retired_refs (ref) VALUES (?)').run(value);
+  retired.add(value);
+}
+
+// Ссылку с такой меткой завели заново — значит она снова в деле
+function reviveRef(ref) {
+  const value = cleanRef(ref);
+  if (!value) return;
+  db.prepare('DELETE FROM retired_refs WHERE ref = ?').run(value);
+  retired.delete(value);
+}
+
 function readCookie(req, name) {
   const raw = req.headers.cookie || '';
   const match = raw.match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`));
@@ -84,9 +113,18 @@ function recordEvent(req, res, { ref, event, path } = {}) {
   // Источник: новый параметр важнее запомненного, иначе берём из куки
   const fresh = cleanRef(ref);
   const stored = cleanRef(readCookie(req, REF_COOKIE));
-  const source = fresh || stored;
-  // Источник живёт 30 дней и продлевается при каждом заходе по ссылке
-  if (fresh) appendCookie(res, req, REF_COOKIE, fresh, REF_TTL_DAYS);
+  let source = fresh || stored;
+
+  // Удалённую метку не воскрешаем. Заход не пропадает — он становится прямым,
+  // каким по сути и является: рекламной ссылки за ним больше нет. Заодно стираем
+  // метку из браузера, иначе он присылал бы её ещё месяц.
+  if (isRetired(source)) {
+    source = '';
+    if (stored) appendCookie(res, req, REF_COOKIE, '', 0);
+  } else if (fresh) {
+    // Источник живёт 30 дней и продлевается при каждом заходе по ссылке
+    appendCookie(res, req, REF_COOKIE, fresh, REF_TTL_DAYS);
+  }
 
   // Технический повтор того же события не увеличивает счётчик
   const recent = db.prepare(`
@@ -327,7 +365,7 @@ function buildLink(ref) {
 }
 
 module.exports = {
-  dailyByRef,
+  dailyByRef, isRetired, retireRef, reviveRef,
   recordEvent, summary, sourceRows, sourceDetail, dailyVisits, buildLink,
   cleanRef, isBot, hashIp,
   VISITOR_COOKIE, REF_COOKIE, EVENTS, TZ_SHIFT,

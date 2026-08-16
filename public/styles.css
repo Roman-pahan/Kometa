@@ -338,6 +338,12 @@ table.row-actions td:first-child .btn { margin-right: 4px; }
    отступы стоят экрана. Длинные значения переносятся, а не растягивают столбец. */
 table.row-actions th, table.row-actions td { padding: 9px 8px; }
 table.row-actions td { max-width: 200px; overflow-wrap: anywhere; }
+/* Столбец действий не сжимаем и не переносим: иначе кнопки наезжают на соседа */
+table.row-actions td:first-child { max-width: none; }
+/* Кнопки в таблицах компактнее обычных — их там по три в строке */
+table.row-actions td:first-child .btn {
+  padding: 4px 9px; font-size: 12px; border-radius: 7px;
+}
 
 /* Таблицы */
 .table-wrap { overflow-x: auto; }
