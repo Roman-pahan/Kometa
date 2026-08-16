@@ -10,13 +10,13 @@
 </head>
 <body>
   <header class="site">
-    <div class="container inner">
+    <div class="container wide inner">
       <a class="logo" href="/"><img class="mark" src="/logo.svg" alt="" width="30" height="30"><span id="siteName">Kometa Exchange</span></a>
       <nav class="main" id="nav"></nav>
     </div>
   </header>
 
-  <main class="container">
+  <main class="container wide">
     <section class="section">
       <h2>Панель администратора</h2>
       <div class="tabs mt">
@@ -32,9 +32,9 @@
       <!-- Заявки -->
       <div id="tab-orders" class="card">
         <div class="table-wrap">
-          <table class="pin-actions">
+          <table class="row-actions">
             <thead>
-              <tr><th>№</th><th>Дата</th><th>Клиент</th><th>Направление</th><th>Отдаёт</th><th>Получает</th><th>Курс</th><th>Контакт</th><th>Реквизиты</th><th>Статус</th><th>Комментарий</th><th></th></tr>
+              <tr><th></th><th>№</th><th>Дата</th><th>Клиент</th><th>Направление</th><th>Отдаёт</th><th>Получает</th><th>Курс</th><th>Контакт</th><th>Реквизиты</th><th>Статус</th><th>Комментарий</th></tr>
             </thead>
             <tbody id="ordersBody"></tbody>
           </table>
@@ -45,9 +45,9 @@
       <!-- Клиенты -->
       <div id="tab-clients" class="card" style="display:none">
         <div class="table-wrap">
-          <table class="pin-actions">
+          <table class="row-actions">
             <thead>
-              <tr><th>№</th><th>Email</th><th>ФИО</th><th>Telegram</th><th>Телефон (банк)</th><th>Верификация</th><th>Заявок</th><th>Регистрация</th><th></th></tr>
+              <tr><th></th><th>№</th><th>Email</th><th>ФИО</th><th>Telegram</th><th>Телефон (банк)</th><th>Верификация</th><th>Заявок</th><th>Регистрация</th></tr>
             </thead>
             <tbody id="clientsBody"></tbody>
           </table>
@@ -349,6 +349,7 @@
       document.getElementById('ordersEmpty').style.display = orders.length ? 'none' : 'block';
       document.getElementById('ordersBody').innerHTML = orders.map(o => `
         <tr data-id="${o.id}">
+          <td><button class="btn small danger deleteOrderBtn">Удалить</button></td>
           <td>${o.id}</td>
           <td>${fmtDate(o.created_at)}</td>
           <td>${esc(o.user_email)} ${o.user_verify === 'approved' ? '<span title="Клиент верифицирован">✅</span>' : ''}</td>
@@ -359,12 +360,11 @@
           <td>${esc(o.contact)}</td>
           <td class="muted small">${orderDetails(o)}</td>
           <td>
-            <select class="statusSel" style="min-width:140px">
+            <select class="statusSel" style="min-width:118px">
               ${STATUS_OPTIONS.map(([v, l]) => `<option value="${v}" ${o.status === v ? 'selected' : ''}>${l}</option>`).join('')}
             </select>
           </td>
-          <td><input class="adminComment" value="${esc(o.admin_comment || '')}" placeholder="Комментарий клиенту" style="min-width:150px"></td>
-          <td><button class="btn small danger deleteOrderBtn">Удалить</button></td>
+          <td><input class="adminComment" value="${esc(o.admin_comment || '')}" placeholder="Комментарий клиенту" style="min-width:120px"></td>
         </tr>
       `).join('');
 
@@ -405,6 +405,10 @@
         const tgLink = tg ? `<a href="https://t.me/${esc(tg.replace(/^@/, ''))}" target="_blank" rel="noopener">@${esc(tg.replace(/^@/, ''))}</a>` : '<span class="muted">—</span>';
         return `
         <tr data-id="${c.id}">
+          <td>
+            <button class="btn small blockBtn">${c.blocked ? 'Разблокировать' : 'Заблокировать'}</button>
+            <button class="btn small danger deleteClientBtn">Удалить</button>
+          </td>
           <td>${c.id}</td>
           <td>${esc(c.email)}${c.blocked ? ' <span class="badge cancelled">Заблокирован</span>' : ''}</td>
           <td>${esc(c.full_name || c.name || '') || '<span class="muted">—</span>'}</td>
@@ -413,10 +417,6 @@
           <td><span class="badge ${VERIFY_BADGE[c.verify_status]}">${VERIFY_LABELS[c.verify_status]}</span></td>
           <td>${c.orders_count}</td>
           <td>${fmtDate(c.created_at)}</td>
-          <td style="white-space:nowrap">
-            <button class="btn small blockBtn">${c.blocked ? 'Разблокировать' : 'Заблокировать'}</button>
-            <button class="btn small danger deleteClientBtn">Удалить</button>
-          </td>
         </tr>`;
       }).join('');
 

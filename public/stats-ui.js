@@ -33,9 +33,10 @@ function initStats(container, { manage = false } = {}) {
 
     <div class="card mt">
       <div class="table-wrap">
-        <table class="pin-actions">
+        <table class="row-actions">
           <thead>
             <tr>
+              <th></th>
               <th>Канал</th><th>ref</th><th>Ссылка</th>
               <th data-sort="visits">Посещений</th>
               <th data-sort="visitors">Уникальных</th>
@@ -45,7 +46,6 @@ function initStats(container, { manage = false } = {}) {
               <th data-sort="last30">30 дней</th>
               <th data-sort="first_visit">Первый переход</th>
               <th data-sort="last_visit">Последний</th>
-              <th></th>
             </tr>
           </thead>
           <tbody class="statsBody"></tbody>
@@ -327,6 +327,11 @@ function initStats(container, { manage = false } = {}) {
     $('.statsEmpty').style.display = rows.length ? 'none' : 'block';
     $('.statsBody').innerHTML = rows.map(r => `
       <tr data-ref="${esc(r.ref)}">
+        <td>
+          <button class="btn small detailBtn">Подробно</button>
+          ${manage && r.known && r.ref ? '<button class="btn small editBtn">Изменить</button>' : ''}
+          ${manage && r.ref ? '<button class="btn small danger deleteBtn">Удалить</button>' : ''}
+        </td>
         <td>${esc(r.title)}${r.enabled ? '' : ' <span class="muted small">(выключен)</span>'}</td>
         <td class="muted small">${esc(r.ref || '—')}</td>
         <td class="muted small">${r.link ? `<button class="btn small copyLink" data-link="${esc(r.link)}">Скопировать</button>` : '—'}</td>
@@ -338,11 +343,6 @@ function initStats(container, { manage = false } = {}) {
         <td>${r.last30}</td>
         <td class="muted small">${r.first_visit ? fmtDate(r.first_visit) : '—'}</td>
         <td class="muted small">${r.last_visit ? fmtDate(r.last_visit) : '—'}</td>
-        <td>
-          <button class="btn small detailBtn">Подробно</button>
-          ${manage && r.known && r.ref ? '<button class="btn small editBtn">Изменить</button>' : ''}
-          ${manage && r.ref ? '<button class="btn small danger deleteBtn">Удалить</button>' : ''}
-        </td>
       </tr>
     `).join('');
 

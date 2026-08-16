@@ -38,6 +38,11 @@ a:hover { text-decoration: underline; }
 
 .container { max-width: 1100px; margin: 0 auto; padding: 0 20px; }
 
+/* Рабочие экраны — админка и кабинет маркетолога — идут во всю ширину окна.
+   Колонка в 1100 пикселей хороша для чтения, но таблица заявок в неё не
+   влезает, и работать приходится через горизонтальную прокрутку. */
+.container.wide { max-width: min(1920px, 100%); padding: 0 24px; }
+
 /* Шапка */
 header.site {
   background: rgba(6, 11, 26, 0.86);
@@ -319,15 +324,20 @@ select.pair-select { font-size: 17px; letter-spacing: .06em; }
 .chart-tip .chart-key { color: var(--text); gap: 6px; }
 .chart-tip .chart-key em { color: var(--muted); font-style: normal; }
 
-/* Столбец с действиями держится у правого края.
-   В таблице заявок двенадцать колонок, и кнопка удаления уезжала за экран:
-   найти её можно было только домотав таблицу вбок, о чём никто не догадывается. */
-table.pin-actions th:last-child,
-table.pin-actions td:last-child {
-  position: sticky; right: 0;
-  background: var(--card);
-  box-shadow: -10px 0 12px -10px rgba(0, 0, 0, .7);
+/* Действия стоят первым столбцом.
+   В широких таблицах последняя колонка уезжает за экран, а прибивать её к краю
+   оказалось хуже: она наползала на соседние ячейки и рвала их содержимое.
+   Слева же первый столбец виден всегда, и перекрывать его нечем. */
+table.row-actions th:first-child,
+table.row-actions td:first-child {
+  white-space: nowrap;
+  width: 1%;
 }
+table.row-actions td:first-child .btn { margin-right: 4px; }
+/* Рабочие таблицы плотнее обычных: в них по десятку колонок, и лишние
+   отступы стоят экрана. Длинные значения переносятся, а не растягивают столбец. */
+table.row-actions th, table.row-actions td { padding: 9px 8px; }
+table.row-actions td { max-width: 200px; overflow-wrap: anywhere; }
 
 /* Таблицы */
 .table-wrap { overflow-x: auto; }
