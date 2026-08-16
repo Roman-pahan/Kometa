@@ -319,6 +319,16 @@ select.pair-select { font-size: 17px; letter-spacing: .06em; }
 .chart-tip .chart-key { color: var(--text); gap: 6px; }
 .chart-tip .chart-key em { color: var(--muted); font-style: normal; }
 
+/* Столбец с действиями держится у правого края.
+   В таблице заявок двенадцать колонок, и кнопка удаления уезжала за экран:
+   найти её можно было только домотав таблицу вбок, о чём никто не догадывается. */
+table.pin-actions th:last-child,
+table.pin-actions td:last-child {
+  position: sticky; right: 0;
+  background: var(--card);
+  box-shadow: -10px 0 12px -10px rgba(0, 0, 0, .7);
+}
+
 /* Таблицы */
 .table-wrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 14px; }

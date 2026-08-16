@@ -33,7 +33,7 @@ function initStats(container, { manage = false } = {}) {
 
     <div class="card mt">
       <div class="table-wrap">
-        <table>
+        <table class="pin-actions">
           <thead>
             <tr>
               <th>Канал</th><th>ref</th><th>Ссылка</th>
