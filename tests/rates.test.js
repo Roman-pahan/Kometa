@@ -356,3 +356,27 @@ test('цена бота переживает перезапуск сайта', a
   const { data } = await json('/api/public');
   assert.equal(dirOf(data.directions, 'THB', 'RUB').rate, 2.91, 'цена на месте сразу после старта');
 });
+
+test('в карточке направления видна маржа, которую заложил бот', async () => {
+  await request('/api/agent/rates', {
+    method: 'POST',
+    headers: { 'X-Agent-Token': AGENT_TOKEN },
+    body: JSON.stringify({
+      ...BOARD,
+      margins: { qr1: 3, qr2: 2.5, tbank: 2, global: 1.8, rub_sale: 2.2, cny_sale: 4, thb_usdt: 1.5 },
+    }),
+  });
+
+  const { data } = await asAdmin('/api/admin/directions');
+  const find = (from, to) => data.directions.find(d => d.from_cur === from && d.to_cur === to);
+
+  // Рубли клиента: у каждого способа отправки своя наценка, по QR берём дешёвую
+  assert.deepEqual(find('RUB', 'THB').margin, { tbank: 2, bank: 1.8, qr: 2.5 });
+  // Через QR тезер не купить — и канала в марже нет
+  assert.deepEqual(find('RUB', 'USDT').margin, { tbank: 2, bank: 1.8 });
+  // Остальные направления идут одной цифрой
+  assert.deepEqual(find('THB', 'RUB').margin, { all: 2.2 });
+  assert.deepEqual(find('THB', 'USDT').margin, { all: 1.5 });
+  assert.deepEqual(find('THB', 'CNY').margin, { all: 4 });
+  assert.deepEqual(find('RUB', 'CNY').margin, { all: 4 });
+});

@@ -217,6 +217,34 @@ function pushedRate(dir) {
 // Порядок один и тот же везде: ручной курс из админки, затем цена оператора.
 // Своего курса сайт не выдумывает: справочные курсы валют не имеют отношения
 // к тому, почём стол реально покупает и продаёт, и по ним легко уйти в минус.
+// Маржа, которую бот заложил в цену этого направления.
+//
+// Сайт её не применяет: цена приходит уже посчитанной, и второй раз наценивать
+// нельзя. Это справка оператору — из чего сложилось число, не открывая Telegram.
+// Задаётся маржа там же, в боте, поэтому здесь она только для чтения.
+function directionMargin(dir) {
+  if (!marketMargins) return null;
+  const m = marketMargins;
+  const num = value => (Number.isFinite(Number(value)) ? Number(value) : null);
+  const pair = `${dir.from_cur}_${dir.to_cur}`;
+
+  // Юань: своя маржа на всех трёх путях, рублёвый и батовый берутся по себестоимости
+  if (dir.to_cur === 'CNY') return { all: num(m.cny_sale) };
+  // Продажа рублей клиенту
+  if (dir.to_cur === 'RUB') return { all: num(m.rub_sale) };
+  // Бат и тезер между собой
+  if ((dir.from_cur === 'THB' && dir.to_cur === 'USDT') || pair === 'USDT_THB') return { all: num(m.thb_usdt) };
+  // Рубли клиента: у каждого способа отправки своя наценка
+  if (dir.from_cur === 'RUB') {
+    const qr = [num(m.qr1), num(m.qr2)].filter(v => v !== null);
+    const byChannel = { tbank: num(m.tbank), bank: num(m.global) };
+    // Через QR тезер не купить, поэтому канал добавляем только там, где он есть
+    if (dir.to_cur === 'THB' && qr.length) byChannel.qr = Math.min(...qr);
+    return byChannel;
+  }
+  return null;
+}
+
 // Цены направления по каналам оплаты, если стол их различает.
 function directionChannels(dir) {
   if (!channelRates) return null;
@@ -259,4 +287,4 @@ function ratesInfo() {
   return { updatedAt: at, hasRates: !!(clientRates || baseRates), market: marketInfo };
 }
 
-module.exports = { refreshRates, startAutoRefresh, directionRate, directionChannels, crossRate, ratesInfo, applyPushedBoard };
+module.exports = { refreshRates, startAutoRefresh, directionRate, directionChannels, directionMargin, crossRate, ratesInfo, applyPushedBoard };

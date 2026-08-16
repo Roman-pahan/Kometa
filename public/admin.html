@@ -625,6 +625,19 @@
     };
 
     // ---------- Курсы и направления ----------
+    // Маржа приходит либо одним числом на всё направление, либо по способам
+    // отправки рублей — у QR, Т-Банка и любого банка она своя.
+    const CHANNEL_SHORT = { qr: 'QR', tbank: 'Т-Банк', bank: 'банк' };
+    function marginText(margin) {
+      if (!margin) return '—';
+      const pct = value => value == null ? null : Number(value).toLocaleString('ru-RU', { maximumFractionDigits: 2 }) + '%';
+      if (margin.all != null) return pct(margin.all);
+      const parts = Object.entries(margin)
+        .filter(([, value]) => value != null)
+        .map(([key, value]) => `${CHANNEL_SHORT[key] || key} ${pct(value)}`);
+      return parts.length ? parts.join(' · ') : '—';
+    }
+
     async function loadDirections() {
       const { directions, rates } = await api('/api/admin/directions');
       // Цены идут из бота: показываем, когда оператор проверял курс в последний раз
@@ -675,6 +688,10 @@
             <p class="muted small mt">${d.rate_source === 'bot'
               ? 'Цену задаёт бот: маржа и каналы настраиваются в Telegram.'
               : 'Бот ещё не присылал цену по этому направлению — на сайте стоит «курс по запросу».'}</p>
+            <div class="field mt" style="margin:0">
+              <span style="display:block;font-size:13.5px;color:var(--muted);margin-bottom:5px">Маржа, заложенная ботом</span>
+              <div class="base-rate">${marginText(d.margin)}</div>
+            </div>
             <div class="field mt" style="margin:0">
               <span style="display:block;font-size:13.5px;color:var(--muted);margin-bottom:5px">Справочный курс (не используется в цене)</span>
               <div class="base-rate">${baseRate}</div>
