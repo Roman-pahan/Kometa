@@ -433,3 +433,32 @@ test('маржа без себестоимости не выдумывает к�
   assert.equal(shown.rate, null, 'без себестоимости цены нет');
   assert.equal(shown.on_request, true, 'направление честно уходит в «по запросу»');
 });
+
+test('себестоимость держится на курсах бота, а не на внешнем справочнике', async () => {
+  // Прогоняем расчёт напрямую: у модуля курсов своя таблица, и она должна
+  // обходиться присланными ботом ногами без похода наружу.
+  const { execFileSync } = require('node:child_process');
+  const script = `
+    const rates = require('./rates.js');
+    // Внешний источник недоступен — как будто интернета нет вовсе
+    global.fetch = () => Promise.reject(new Error('нет сети'));
+    const { setSetting } = require('./db.js');
+    setSetting('agent_board', JSON.stringify({
+      usdt_thb: 33, rub_usdt: 97, received_at: new Date().toISOString(),
+      client: { THB_RUB: 2.91 },
+    }));
+    rates.applyPushedBoard();
+    const dir = { from_cur: 'THB', to_cur: 'RUB', markup_pct: 5, price_mode: 'margin' };
+    const priced = rates.directionRate(dir);
+    console.log(JSON.stringify({ base: rates.crossRate('THB', 'RUB'), rate: priced.rate, source: priced.source }));
+  `;
+  const out = execFileSync(process.execPath, ['-e', script], {
+    cwd: path.join(__dirname, '..'),
+    env: { ...process.env, DB_FILE: path.join(os.tmpdir(), `kometa-cost-${crypto.randomBytes(4).toString('hex')}.db`), UPLOADS_DIR },
+  }).toString();
+  const result = JSON.parse(out.trim().split('\n').pop());
+
+  assert.ok(Math.abs(result.base - 97 / 33) < 1e-9, 'себестоимость посчиталась из ног бота');
+  assert.equal(result.source, 'margin');
+  assert.ok(Math.abs(result.rate - (97 / 33) * 0.95) < 1e-9, 'маржа снялась с этой себестоимости');
+});

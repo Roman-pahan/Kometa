@@ -28,10 +28,22 @@ let channelRates = null;
 // Остальное в таблице курсов приходит из справочника валют и к тому, почём
 // стол реально покупает, отношения не имеет. Считать от такого «курса» свою
 // маржу — тот же способ уйти в минус, от которого мы избавлялись.
-let marketCurrencies = new Set(['USDT']);
+// Ноги себестоимости, как их присылает бот: сколько единиц валюты в одном USDT.
+// Держим отдельно от справочной таблицы курсов, и вот почему: справочник тянется
+// из внешнего источника, а он бывает недоступен. Пока себестоимость лежала там,
+// вместе с ним отваливался и расчёт по своей марже — хотя все нужные числа
+// уже пришли от бота и никакого справочника не требуют.
+let marketLegs = { USDT: 1, USD: 1 };
 
 function noteMarketCurrency(code, value) {
-  if (Number.isFinite(Number(value)) && Number(value) > 0) marketCurrencies.add(code);
+  const num = Number(value);
+  if (Number.isFinite(num) && num > 0) marketLegs[code] = num;
+}
+
+// Известна ли настоящая себестоимость этой валюты. Справочный курс сюда не
+// годится: он говорит о мировом рынке, а не о том, почём покупает стол.
+function hasRealCost(code) {
+  return Object.prototype.hasOwnProperty.call(marketLegs, code);
 }
 
 // Направления, где старая цена бессмысленна. Юань стол не котирует постоянно:
@@ -212,10 +224,16 @@ function startAutoRefresh() {
 }
 
 // Кросс-курс: сколько to_cur даёт 1 единица from_cur (без наценки)
+// Сколько единиц валюты приходится на один USDT. Сначала смотрим ноги от бота,
+// и только если их нет — справочную таблицу.
+function unitsPerUsdt(code) {
+  if (marketLegs[code]) return marketLegs[code];
+  return baseRates ? baseRates[code] : null;
+}
+
 function crossRate(fromCur, toCur) {
-  if (!baseRates) return null;
-  const from = baseRates[fromCur];
-  const to = baseRates[toCur];
+  const from = unitsPerUsdt(fromCur);
+  const to = unitsPerUsdt(toCur);
   if (!from || !to) return null;
   return to / from;
 }
@@ -301,7 +319,7 @@ function directionRate(dir, channel) {
     // Себестоимость — тот самый справочный кросс-курс из присланных ботом
     // ног: батовой от биржи, рублёвой от Т-Банка, юаневой от стакана.
     const percent = Number(dir.markup_pct);
-    const realCost = marketCurrencies.has(dir.from_cur) && marketCurrencies.has(dir.to_cur);
+    const realCost = hasRealCost(dir.from_cur) && hasRealCost(dir.to_cur);
     if (base && realCost && Number.isFinite(percent) && percent >= 0 && percent < 100) {
       // Клиент получает меньше, чем по себестоимости, — разница и есть маржа
       return { rate: base * (1 - percent / 100), source: 'margin', base, at: null };
