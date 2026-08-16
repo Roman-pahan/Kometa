@@ -587,7 +587,7 @@ app.get('/api/public', (req, res) => {
     const byChannel = directionChannels(d);
     return {
       id: d.id, from_cur: d.from_cur, to_cur: d.to_cur, label: d.label,
-      payment_note: d.payment_note, min_from: d.min_from, max_from: d.max_from,
+      payment_note: d.payment_note, min_from: d.min_from,
       // Восемь знаков: обратный курс должен разворачиваться в ту же цену
       rate: rate != null ? Number(rate.toFixed(8)) : null,
       // Направление без цены не «сломано», а считается по запросу
@@ -705,8 +705,9 @@ app.post('/api/orders', requireAuth, limitOrders, (req, res) => {
   }
   const amount = Number(amount_from);
   if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'Некорректная сумма' });
+  // Потолка у направлений нет: крупную сумму оператор обсуждает лично, а не
+  // отбивает формой. Колонка max_from в базе осталась, но нигде не читается.
   if (dir.min_from && amount < dir.min_from) return res.status(400).json({ error: `Минимальная сумма: ${dir.min_from} ${dir.from_cur}` });
-  if (dir.max_from && amount > dir.max_from) return res.status(400).json({ error: `Максимальная сумма: ${dir.max_from} ${dir.from_cur}` });
   if (!contact || !String(contact).trim()) return res.status(400).json({ error: 'Укажите контакт (Telegram)' });
   // Курс считается по выбранному способу отправки: у каждого он свой
   const { rate, source } = directionRate(dir, channel || undefined);

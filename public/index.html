@@ -321,8 +321,7 @@
       if (!dir) { out.textContent = '0'; return; }
       document.getElementById('fromCurLabel').textContent = cur(dir.from_cur);
       document.getElementById('toCurLabel').textContent = cur(dir.to_cur);
-      limits.textContent = (dir.min_from ? `Мин: ${fmtAmount(dir.min_from)} ${cur(dir.from_cur)}` : '') +
-        (dir.max_from ? ` · Макс: ${fmtAmount(dir.max_from)} ${cur(dir.from_cur)}` : '');
+      limits.textContent = dir.min_from ? `Мин: ${fmtAmount(dir.min_from)} ${cur(dir.from_cur)}` : '';
       // Курс зависит от способа отправки рублей: у QR, Т-Банка и любого
       // банка он свой, поэтому берём цену выбранного канала
       const channel = dir.from_cur === 'RUB' ? document.getElementById('channelSelect').value : '';

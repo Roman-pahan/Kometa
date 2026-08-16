@@ -686,12 +686,8 @@
               <input class="f-manual" type="number" step="any" value="${isManual ? d.manual_rate : ''}" placeholder="Например 2.35"></label>
           </div>
 
-          <div class="flex mt" style="gap:8px">
-            <label class="field grow" style="margin:0"><span>Мин. сумма</span>
-              <input class="f-min" type="number" step="any" value="${d.min_from}"></label>
-            <label class="field grow" style="margin:0"><span>Макс. сумма</span>
-              <input class="f-max" type="number" step="any" value="${d.max_from}"></label>
-          </div>
+          <label class="field mt"><span>Мин. сумма</span>
+            <input class="f-min" type="number" step="any" value="${d.min_from}"></label>
           <label class="field mt"><span>Примечание для клиентов</span>
             <input class="f-note" value="${esc(d.payment_note)}"></label>
 
@@ -736,7 +732,6 @@
               markup_pct: card.querySelector('.f-markup').value,
               manual_rate: manual ? manualVal : '',
               min_from: card.querySelector('.f-min').value,
-              max_from: card.querySelector('.f-max').value,
               enabled: card.querySelector('.f-enabled').checked,
             });
             showMsg(msg, 'Сохранено', 'ok');
