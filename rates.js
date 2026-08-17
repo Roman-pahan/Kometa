@@ -53,7 +53,10 @@ function hasRealCost(code) {
 
 // Направления, где старая цена бессмысленна. Юань стол не котирует постоянно:
 // курс называется по запросу, и показывать вчерашний — обманывать клиента.
-const PERISHABLE_DIRECTIONS = ['RUB_CNY', 'USDT_CNY', 'THB_CNY', 'CNY_RUB', 'CNY_USDT', 'CNY_THB'];
+// Юань стол не котирует постоянно, а цена выкупа ключей из него и считается —
+// вчерашнее число тут вводит в заблуждение так же, как и по юаню.
+const PERISHABLE_DIRECTIONS = ['RUB_CNY', 'USDT_CNY', 'THB_CNY', 'CNY_RUB', 'CNY_USDT', 'CNY_THB',
+  'KEY_USDT', 'KEY_RUB'];
 
 // Восстановление после перезапуска
 try {

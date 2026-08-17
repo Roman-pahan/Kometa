@@ -237,6 +237,10 @@ const DEFAULT_DIRECTIONS = [
   { from_cur: 'RUB', to_cur: 'CNY', label: '₽ → ¥', payment_note: '', markup_pct: 2.5, min_from: 3000, max_from: 1000000, sort: 70 },
   { from_cur: 'USDT', to_cur: 'CNY', label: '₮ → ¥', payment_note: '', markup_pct: 2.5, min_from: 30, max_from: 15000, sort: 80 },
   { from_cur: 'THB', to_cur: 'CNY', label: '฿ → ¥', payment_note: '', markup_pct: 2.5, min_from: 1000, max_from: 500000, sort: 90 },
+  // Ключи TF2 стол только выкупает: клиент отдаёт ключи и получает деньги.
+  // Обратной пары нет — продажей ключей мы не занимаемся.
+  { from_cur: 'KEY', to_cur: 'USDT', label: '🔑 → ₮', payment_note: '', markup_pct: 4, min_from: 1, max_from: 0, sort: 100 },
+  { from_cur: 'KEY', to_cur: 'RUB', label: '🔑 → ₽', payment_note: '', markup_pct: 4, min_from: 1, max_from: 0, sort: 110 },
 ];
 
 // Добавляет отсутствующие стандартные направления (по паре валют), не трогая существующие.
@@ -277,6 +281,15 @@ for (const d of usdtRub) {
   if (!dirExists.get(d.from_cur, d.to_cur)) { insDir.run(d); addedDirs++; }
 }
 if (addedDirs) console.log(`[db] добавлены направления USDT↔RUB: ${addedDirs}`);
+
+// Миграция: выкуп ключей TF2 — двух направлений раньше не существовало.
+for (const pair of [['KEY', 'USDT'], ['KEY', 'RUB']]) {
+  const wanted = DEFAULT_DIRECTIONS.find(d => d.from_cur === pair[0] && d.to_cur === pair[1]);
+  if (wanted && !dirExists.get(pair[0], pair[1])) {
+    insDir.run(wanted);
+    console.log(`[db] добавлено направление ${wanted.label}`);
+  }
+}
 
 // Миграция: юани стол продаёт и за баты тоже — направления раньше не было.
 const thbCny = DEFAULT_DIRECTIONS.find(d => d.from_cur === 'THB' && d.to_cur === 'CNY');

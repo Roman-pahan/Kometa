@@ -492,3 +492,41 @@ test('без цены ключей сайт не выдумывает её', asy
   assert.equal(data.keys.buy_usdt, null);
   assert.equal(data.keys.youpin_cny, null);
 });
+
+test('ключи на витрине только выкупаются, обратной пары нет', async () => {
+  await request('/api/agent/rates', {
+    method: 'POST',
+    headers: { 'X-Agent-Token': AGENT_TOKEN },
+    body: JSON.stringify({
+      ...BOARD,
+      client: { ...BOARD.client, KEY_USDT: 1.61, KEY_RUB: 142.71 },
+      keys: { youpin_cny: 11.14, buy_usdt: 1.61, buy_rub: 142.71, margin_percent: 4 },
+    }),
+  });
+
+  const pub = (await json('/api/public')).data.directions;
+  const toUsdt = dirOf(pub, 'KEY', 'USDT');
+  const toRub = dirOf(pub, 'KEY', 'RUB');
+
+  assert.ok(toUsdt, 'направление «ключи за тезер» есть на витрине');
+  assert.equal(toUsdt.rate, 1.61, 'за ключ дают ровно то, что посчитал бот');
+  assert.equal(toRub.rate, 142.71);
+
+  // Обратной стороны быть не должно: продажей ключей стол не занимается
+  assert.equal(dirOf(pub, 'USDT', 'KEY'), undefined);
+  assert.equal(dirOf(pub, 'RUB', 'KEY'), undefined);
+});
+
+test('без цены ключей направления уходят в «по запросу», а не показывают вчерашнее', async () => {
+  // Набор без ключей: цена вчера была, сегодня её не прислали
+  await request('/api/agent/rates', {
+    method: 'POST',
+    headers: { 'X-Agent-Token': AGENT_TOKEN },
+    body: JSON.stringify(BOARD),
+  });
+
+  const pub = (await json('/api/public')).data.directions;
+  const toUsdt = dirOf(pub, 'KEY', 'USDT');
+  assert.equal(toUsdt.rate, null, 'вчерашняя цена выкупа не показывается');
+  assert.equal(toUsdt.on_request, true);
+});
