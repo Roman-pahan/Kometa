@@ -517,8 +517,8 @@ test('ключи на витрине только выкупаются, обра
   assert.equal(dirOf(pub, 'RUB', 'KEY'), undefined);
 });
 
-test('без цены ключей направления уходят в «по запросу», а не показывают вчерашнее', async () => {
-  // Набор без ключей: цена вчера была, сегодня её не прислали
+test('цена выкупа ключей держится, пока не прислали новую', async () => {
+  // Набор без ключей: цену сегодня не отправляли
   await request('/api/agent/rates', {
     method: 'POST',
     headers: { 'X-Agent-Token': AGENT_TOKEN },
@@ -527,6 +527,11 @@ test('без цены ключей направления уходят в «по
 
   const pub = (await json('/api/public')).data.directions;
   const toUsdt = dirOf(pub, 'KEY', 'USDT');
-  assert.equal(toUsdt.rate, null, 'вчерашняя цена выкупа не показывается');
-  assert.equal(toUsdt.on_request, true);
+  // Цена ключа на площадке стоит неделями, поэтому прошлая остаётся верной
+  assert.equal(toUsdt.rate, 1.61, 'прежняя цена выкупа осталась на витрине');
+  assert.equal(toUsdt.on_request, false);
+  assert.equal(dirOf(pub, 'KEY', 'RUB').rate, 142.71);
+
+  // А юань в том же наборе всё равно исчезает: там правило другое
+  assert.equal(dirOf(pub, 'RUB', 'CNY').on_request, true);
 });
