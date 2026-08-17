@@ -69,7 +69,7 @@ function fmtRate(r) {
 }
 
 // Валюты на сайте показываются значками, а не кодами
-const CUR_SIGNS = { RUB: '₽', THB: '฿', USDT: '₮', CNY: '¥', USD: '$', EUR: '€', KEY: '🔑' };
+const CUR_SIGNS = { RUB: '₽', THB: '฿', USDT: '₮', CNY: '¥', USD: '$', EUR: '€', KEY: 'ключ' };
 function cur(code) {
   return CUR_SIGNS[String(code || '').toUpperCase()] || code;
 }

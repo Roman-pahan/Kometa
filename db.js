@@ -239,8 +239,12 @@ const DEFAULT_DIRECTIONS = [
   { from_cur: 'THB', to_cur: 'CNY', label: '฿ → ¥', payment_note: '', markup_pct: 2.5, min_from: 1000, max_from: 500000, sort: 90 },
   // Ключи TF2 стол только выкупает: клиент отдаёт ключи и получает деньги.
   // Обратной пары нет — продажей ключей мы не занимаемся.
-  { from_cur: 'KEY', to_cur: 'USDT', label: '🔑 → ₮', payment_note: '', markup_pct: 4, min_from: 1, max_from: 0, sort: 100 },
-  { from_cur: 'KEY', to_cur: 'RUB', label: '🔑 → ₽', payment_note: '', markup_pct: 4, min_from: 1, max_from: 0, sort: 110 },
+  { from_cur: 'KEY', to_cur: 'USDT', label: '🔑 Ключи TF2 → ₮',
+    payment_note: 'Выкупаем ключи Mann Co. Supply Crate Key. Передача через обмен в Steam, оплата после получения.',
+    markup_pct: 4, min_from: 1, max_from: 0, sort: 100 },
+  { from_cur: 'KEY', to_cur: 'RUB', label: '🔑 Ключи TF2 → ₽',
+    payment_note: 'Выкупаем ключи Mann Co. Supply Crate Key. Передача через обмен в Steam, оплата после получения.',
+    markup_pct: 4, min_from: 1, max_from: 0, sort: 110 },
 ];
 
 // Добавляет отсутствующие стандартные направления (по паре валют), не трогая существующие.
@@ -296,6 +300,17 @@ const thbCny = DEFAULT_DIRECTIONS.find(d => d.from_cur === 'THB' && d.to_cur ===
 if (thbCny && !dirExists.get('THB', 'CNY')) {
   insDir.run(thbCny);
   console.log('[db] добавлено направление ฿ → ¥');
+}
+
+// Миграция: у ключей название и пояснение должны читаться без догадок —
+// один значок 🔑 ничего не говорит человеку, который сюда попал впервые.
+for (const pair of [['KEY', 'USDT'], ['KEY', 'RUB']]) {
+  const wanted = DEFAULT_DIRECTIONS.find(d => d.from_cur === pair[0] && d.to_cur === pair[1]);
+  if (!wanted) continue;
+  const changed = db.prepare(`UPDATE directions SET label = ?, payment_note = ?
+    WHERE from_cur = ? AND to_cur = ? AND (label != ? OR payment_note != ?)`)
+    .run(wanted.label, wanted.payment_note, pair[0], pair[1], wanted.label, wanted.payment_note).changes;
+  if (changed) console.log(`[db] подписано направление ${wanted.label}`);
 }
 
 // Миграция: в названиях направлений остаются только значки валют, а способы
