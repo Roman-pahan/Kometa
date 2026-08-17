@@ -14,6 +14,11 @@ let baseRates = null;   // { THB: 36.2, RUB: 79.5, CNY: 7.1, USD: 1, USDT: 1, ..
 let updatedAt = null;
 let marketInfo = { used: false, usdt_thb: null, rub_usdt: null, at: null, error: null };
 let marketMargins = null;   // { qr, tbank, global } — проценты, заданные в боте
+
+// Закупочная цена ключей TF2, посчитанная ботом: цена на китайской площадке,
+// делённая на курс юаня с маржой. Сайт её не считает и не применяет к
+// направлениям — держит, чтобы оператор видел цифру там же, где остальные курсы.
+let keysPrice = null;
 // Готовые цены клиенту по направлениям: { RUB_THB: { rate: 0.369, at: '…' } }.
 // Каждая цена помнит, когда её подтвердил оператор.
 let clientRates = null;
@@ -141,6 +146,7 @@ function applyPushedBoard() {
     if (board.cny_per_usdt) baseRates.CNY = board.cny_per_usdt;
   }
   marketMargins = board.margins || null;
+  keysPrice = board.keys || null;
   marketInfo = {
     used: true,
     source: 'bot',
@@ -341,6 +347,10 @@ function directionRate(dir, channel) {
   return { rate: null, source: 'on_request', base, at: null };
 }
 
+function keysInfo() {
+  return keysPrice;
+}
+
 function ratesInfo() {
   // Возраст цены — это момент проверки курса оператором, а не время,
   // когда сайт последний раз ходил за справочными курсами
@@ -348,4 +358,4 @@ function ratesInfo() {
   return { updatedAt: at, hasRates: !!(clientRates || baseRates), market: marketInfo };
 }
 
-module.exports = { refreshRates, startAutoRefresh, directionRate, directionChannels, directionMargin, crossRate, ratesInfo, applyPushedBoard };
+module.exports = { refreshRates, startAutoRefresh, directionRate, directionChannels, directionMargin, crossRate, ratesInfo, keysInfo, applyPushedBoard };

@@ -462,3 +462,33 @@ test('себестоимость держится на курсах бота, а
   assert.equal(result.source, 'margin');
   assert.ok(Math.abs(result.rate - (97 / 33) * 0.95) < 1e-9, 'маржа снялась с этой себестоимости');
 });
+
+test('закупочная цена ключей приходит от бота и показывается как есть', async () => {
+  await request('/api/agent/rates', {
+    method: 'POST',
+    headers: { 'X-Agent-Token': AGENT_TOKEN },
+    body: JSON.stringify({
+      ...BOARD,
+      keys: { youpin_cny: 11.14, buy_usdt: 1.61, buy_rub: 142.71, margin_percent: 4 },
+    }),
+  });
+
+  const { data } = await asAdmin('/api/admin/directions');
+  assert.deepEqual(data.keys, { youpin_cny: 11.14, buy_usdt: 1.61, buy_rub: 142.71, margin_percent: 4 },
+    'сайт отдаёт цену ключей ровно такой, какой прислал бот');
+
+  // Наружу, клиентам, она не уходит: это внутренняя цифра оператора
+  const pub = await json('/api/public');
+  assert.equal(pub.data.keys, undefined, 'на витрине цены закупки нет');
+});
+
+test('без цены ключей сайт не выдумывает её', async () => {
+  await request('/api/agent/rates', {
+    method: 'POST',
+    headers: { 'X-Agent-Token': AGENT_TOKEN },
+    body: JSON.stringify({ ...BOARD, keys: { youpin_cny: null, buy_usdt: null, buy_rub: null, margin_percent: 4 } }),
+  });
+  const { data } = await asAdmin('/api/admin/directions');
+  assert.equal(data.keys.buy_usdt, null);
+  assert.equal(data.keys.youpin_cny, null);
+});

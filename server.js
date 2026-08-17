@@ -4,7 +4,7 @@ const os = require('os');
 const crypto = require('crypto');
 const express = require('express');
 const { db, getSetting, setSetting, restoreDefaultDirections } = require('./db');
-const { refreshRates, startAutoRefresh, directionRate, directionChannels, directionMargin, ratesInfo, applyPushedBoard } = require('./rates');
+const { refreshRates, startAutoRefresh, directionRate, directionChannels, directionMargin, ratesInfo, keysInfo, applyPushedBoard } = require('./rates');
 const { sendMail, isConfigured: mailConfigured, diagnose: mailDiagnose } = require('./mailer');
 const { encryptBuffer, decryptBuffer, sealData, verifySeal, hashBuffer } = require('./secure-store');
 const { notifyAdmin, notifyAdminSafe, detectChatId, isConfigured: tgConfigured } = require('./notifier');
@@ -1290,6 +1290,8 @@ app.get('/api/admin/directions', requireAdmin, (req, res) => {
       return { ...d, current_rate: rate, rate_source: source, base_rate: base, rate_at: at || null, margin: directionMargin(d) };
     }),
     rates: ratesInfo(),
+    // Закупочная цена ключей: её считает бот, сайт только показывает
+    keys: keysInfo(),
   });
 });
 

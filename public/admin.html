@@ -91,6 +91,15 @@
           <button class="btn small" id="restoreDefaultsBtn" title="Вернуть удалённые стандартные направления (THB/RUB/USDT/CNY)">↩️ Восстановить стандартные</button>
           <button class="btn small" id="refreshRatesBtn2">🔄 Обновить базовые курсы</button>
         </div>
+
+        <div class="card" id="keysCard" style="display:none;margin-bottom:16px">
+          <div class="flex"><h2 style="font-size:18px">Ключи TF2</h2>
+            <span class="grow"></span>
+            <span class="muted small" id="keysMargin"></span></div>
+          <p class="muted small mt">Считает бот: цена ключа на китайской площадке, делённая на курс юаня с маржой.
+            Меняется командой <code>/key</code> в Telegram.</p>
+          <div class="stat-tiles mt" id="keysTiles"></div>
+        </div>
         <div class="dir-grid" id="dirsGrid"></div>
 
         <div class="card mt">
@@ -639,13 +648,27 @@
     }
 
     async function loadDirections() {
-      const { directions, rates } = await api('/api/admin/directions');
+      const { directions, rates, keys } = await api('/api/admin/directions');
       // Цены идут из бота: показываем, когда оператор проверял курс в последний раз
       const fromBot = rates.market && rates.market.source === 'bot';
       document.getElementById('dirRatesInfo').textContent = !rates.updatedAt
         ? 'Курсы ещё не загружены.'
         : (fromBot ? 'Курсы из бота, проверены: ' : 'Справочные курсы обновлены: ') +
           new Date(rates.updatedAt).toLocaleString('ru-RU');
+
+      // Закупочная цена ключей приходит от бота посчитанной
+      const keysCard = document.getElementById('keysCard');
+      if (keys && keys.youpin_cny) {
+        keysCard.style.display = 'block';
+        document.getElementById('keysMargin').textContent = 'Маржа ' + fmtAmount(keys.margin_percent) + '%';
+        document.getElementById('keysTiles').innerHTML = [
+          tile('Цена на площадке', fmtAmount(keys.youpin_cny) + ' ¥'),
+          keys.buy_usdt ? tile('Покупаем по', fmtAmount(keys.buy_usdt) + ' ₮') : tile('Покупаем по', 'нет курса юаня'),
+          keys.buy_rub ? tile('или', fmtAmount(keys.buy_rub) + ' ₽') : '',
+        ].join('');
+      } else {
+        keysCard.style.display = 'none';
+      }
 
       document.getElementById('dirsGrid').innerHTML = directions.map(d => {
         // Режим приходит с сервера. Старые направления его не имеют, поэтому
