@@ -466,6 +466,54 @@
 
     // ---------- Верификация ----------
 
+    // Готовые сообщения клиенту по его верификации — как /msg в боте оператора.
+    // Сайт ничего не отправляет сам: текст копируется, открывается чат клиента
+    // в Telegram, оператор вставляет и отправляет. Так клиент узнаёт о решении
+    // сразу, а не когда сам догадается заглянуть в кабинет.
+    const CABINET_URL = location.origin + '/cabinet.html';
+    const VERIFY_MESSAGES = [
+      {
+        label: '✅ Подтверждена',
+        text: () =>
+          'Здравствуйте! Ваша верификация на Kometa Exchange подтверждена ✅\n' +
+          'Теперь можно оплачивать рубли через QR. Оформить заявку: ' + location.origin,
+      },
+      {
+        label: '📷 Переснять паспорт',
+        text: () =>
+          'Здравствуйте! По вашей верификации на Kometa Exchange: фото паспорта получилось нечётким. ' +
+          'Переснимите, пожалуйста, разворот с фото при хорошем свете, чтобы все данные читались, ' +
+          'и отправьте заново в личном кабинете: ' + CABINET_URL,
+      },
+      {
+        label: '🤳 Переснять лицо',
+        text: () =>
+          'Здравствуйте! По вашей верификации на Kometa Exchange: на фото не видно лица целиком. ' +
+          'Переснимите, пожалуйста, при хорошем свете, без очков и головного убора, ' +
+          'и отправьте заново в личном кабинете: ' + CABINET_URL,
+      },
+      {
+        label: '❌ Отказ с причиной',
+        // Причина берётся из поля «Причина отклонения» той же карточки.
+        needsReason: true,
+        text: reason =>
+          'Здравствуйте! Верификацию на Kometa Exchange пока не можем подтвердить.\n' +
+          'Причина: ' + reason + '\n' +
+          'Исправьте, пожалуйста, и отправьте заново в личном кабинете: ' + CABINET_URL,
+      },
+    ];
+
+    // Копирует текст в буфер. Если браузер не дал — показывает его для ручного копирования.
+    async function copyText(text) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch (_) {
+        prompt('Скопируйте текст сообщения:', text);
+        return false;
+      }
+    }
+
     async function loadVerifications() {
       const { users } = await api('/api/admin/verifications');
       const pending = users.filter(u => u.verify_status === 'pending').length;
@@ -474,7 +522,7 @@
       counter.textContent = pending;
       document.getElementById('verifyEmpty').style.display = users.length ? 'none' : 'block';
       document.getElementById('verifyList').innerHTML = users.map(u => `
-        <div class="card" style="margin-bottom:16px" data-id="${u.id}">
+        <div class="card" style="margin-bottom:16px" data-id="${u.id}" data-tg="${esc(u.telegram || '')}">
           <div class="flex">
             <b>${esc(u.email)}</b>
             <span class="badge ${VERIFY_BADGE[u.verify_status]}">${VERIFY_LABELS[u.verify_status]}</span>
@@ -502,6 +550,14 @@
             <input class="rejectReason grow" placeholder="Причина отклонения (увидит клиент)" value="${esc(u.verify_comment || '')}">
             <button class="btn danger small deleteVerifyBtn">Удалить</button>
           </div>
+          <div class="mt">
+            <span class="muted small">💬 Быстрое сообщение в Telegram${u.telegram
+              ? ` — откроется чат с @${esc(u.telegram)}, текст уже будет скопирован`
+              : ' — клиент не указал Telegram, текст только скопируется'}</span>
+            <div class="flex" style="flex-wrap:wrap;gap:8px;margin-top:6px">
+              ${VERIFY_MESSAGES.map((m, i) => `<button class="btn small quickMsgBtn" data-msg="${i}">${m.label}</button>`).join('')}
+            </div>
+          </div>
         </div>
       `).join('');
 
@@ -516,6 +572,24 @@
           api('/api/admin/verifications/' + id, 'PATCH', { status: 'rejected', comment: reason })
             .then(() => { loadVerifications(); loadOrders(); loadClients(); }).catch(e => alert(e.message));
         };
+        card.querySelectorAll('.quickMsgBtn').forEach(btn => {
+          btn.onclick = async () => {
+            const message = VERIFY_MESSAGES[Number(btn.dataset.msg)];
+            const reason = card.querySelector('.rejectReason').value.trim();
+            if (message.needsReason && !reason) {
+              return alert('Сначала впишите причину отклонения — она попадёт в сообщение');
+            }
+            const copied = await copyText(message.text(reason));
+            // Чат открываем после копирования: клик ещё свежий, браузер окно не запретит
+            const tg = card.dataset.tg;
+            if (tg) window.open('https://t.me/' + encodeURIComponent(tg), '_blank', 'noopener');
+            if (copied) {
+              const label = btn.textContent;
+              btn.textContent = tg ? '✔ Скопировано — вставьте в чат' : '✔ Скопировано';
+              setTimeout(() => { btn.textContent = label; }, 2500);
+            }
+          };
+        });
         card.querySelector('.deleteVerifyBtn').onclick = async () => {
           const who = card.querySelector('b').textContent;
           if (!confirm(
