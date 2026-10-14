@@ -91,8 +91,43 @@ const GREETING =
   'Нажмите кнопку ниже: укажите ФИО и телефон, сфотографируйте паспорт и лицо с камеры. ' +
   'Проверка занимает немного времени — результат сообщит оператор.';
 
+// Имя бота: заполняется при подключении, нужно для ссылки в кнопке
+let botUsername = '';
+
+// Карточка для отправки в чужой чат: оператор набирает @бота в переписке с
+// клиентом и шлёт сообщение с кнопкой. Скопированный текст кнопку не несёт,
+// а сообщение «через бота» — несёт, и клиент жмёт её прямо в своём чате.
+//
+// Кнопка ведёт в бота, а не сразу в форму: открыть форму кнопкой Telegram
+// разрешает только в личке с ботом. Клиент жмёт «Запустить» и получает
+// приветствие с кнопкой формы.
+function inlineVerifyCard(username) {
+  return {
+    type: 'article',
+    id: 'verify',
+    title: '🔐 Отправить кнопку верификации',
+    description: 'Клиент нажмёт и пройдёт проверку в Kometa',
+    input_message_content: { message_text: 'Для верификации нажмите кнопку ниже 👇' },
+    reply_markup: {
+      inline_keyboard: [[{ text: '🔐 Пройти верификацию', url: `https://t.me/${username}?start=verify` }]],
+    },
+  };
+}
+
 /** Отвечает на любое сообщение в личке приветствием с кнопкой формы. */
 async function handleUpdate(update, appUrl) {
+  // Набрали @бота в любом чате — предлагаем карточку с кнопкой.
+  // Отправить её может кто угодно, но в ней только ссылка на верификацию.
+  const query = update && update.inline_query;
+  if (query) {
+    if (!botUsername) return;
+    await tg('answerInlineQuery', {
+      inline_query_id: query.id,
+      results: [inlineVerifyCard(botUsername)],
+      cache_time: 300,
+    });
+    return;
+  }
   const msg = update && update.message;
   // Бот работает только в личке: в группе форму с паспортом открывать незачем
   if (!msg || !msg.chat || msg.chat.type !== 'private') return;
@@ -134,10 +169,12 @@ function mount(app, { baseUrl }) {
   (async () => {
     try {
       const me = await tg('getMe');
+      botUsername = me.username;
       await tg('setWebhook', {
         url: baseUrl + WEBHOOK_PATH,
         secret_token: webhookSecret(),
-        allowed_updates: ['message'],
+        // inline_query — карточка с кнопкой, когда бота набирают в чужом чате
+        allowed_updates: ['message', 'inline_query'],
         drop_pending_updates: true,
       });
       await tg('setChatMenuButton', { menu_button: { type: 'web_app', text: 'Верификация', web_app: { url: appUrl } } });
@@ -148,4 +185,9 @@ function mount(app, { baseUrl }) {
   })();
 }
 
-module.exports = { mount, validateInitData, signInitData, handleUpdate, webhookSecret, APP_PATH, WEBHOOK_PATH, isEnabled: () => !!token() };
+module.exports = {
+  mount, validateInitData, signInitData, handleUpdate, inlineVerifyCard, webhookSecret, APP_PATH, WEBHOOK_PATH,
+  isEnabled: () => !!token(),
+  // Только для тестов: имя бота без похода в Telegram
+  _setUsername: (name) => { botUsername = name; },
+};

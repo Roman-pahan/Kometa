@@ -195,3 +195,59 @@ test('секрет вебхука выводится из токена и не �
   process.env.TG_VERIFY_BOT_TOKEN = saved;
   assert.notEqual(first, second);
 });
+
+// ---------- Ответы бота ----------
+
+// Перехватывает обращения бота к Telegram: что и с чем он вызвал
+async function withTelegramCalls(run) {
+  const calls = [];
+  const realFetch = global.fetch;
+  const realToken = process.env.TG_VERIFY_BOT_TOKEN;
+  process.env.TG_VERIFY_BOT_TOKEN = BOT_TOKEN;
+  global.fetch = async (url, opts) => {
+    calls.push({ method: String(url).split('/').pop(), body: JSON.parse(opts.body) });
+    return { json: async () => ({ ok: true, result: true }) };
+  };
+  try { await run(); } finally {
+    global.fetch = realFetch;
+    process.env.TG_VERIFY_BOT_TOKEN = realToken;
+  }
+  return calls;
+}
+
+const { handleUpdate, _setUsername } = require('../tg-verify');
+
+test('набрали бота в чужом чате — он предлагает карточку с кнопкой верификации', async () => {
+  _setUsername('KometaBlackHoleBot');
+  const calls = await withTelegramCalls(() => handleUpdate({ inline_query: { id: 'q1', query: '' } }, 'https://kometa.test/tg-verify.html'));
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].method, 'answerInlineQuery');
+  const card = calls[0].body.results[0];
+  assert.match(card.input_message_content.message_text, /верификац/i);
+  const button = card.reply_markup.inline_keyboard[0][0];
+  assert.equal(button.text, '🔐 Пройти верификацию');
+  // Кнопка ведёт в бота: форму кнопкой Telegram открывает только в личке с ним
+  assert.equal(button.url, 'https://t.me/KometaBlackHoleBot?start=verify');
+  assert.equal(button.web_app, undefined);
+});
+
+test('пока имя бота неизвестно, карточку не предлагаем', async () => {
+  _setUsername('');
+  const calls = await withTelegramCalls(() => handleUpdate({ inline_query: { id: 'q2', query: '' } }, 'https://kometa.test/tg-verify.html'));
+  assert.equal(calls.length, 0);
+  _setUsername('KometaBlackHoleBot');
+});
+
+test('в личке бот отвечает приветствием с кнопкой, открывающей форму', async () => {
+  const calls = await withTelegramCalls(() => handleUpdate(
+    { message: { chat: { id: 42, type: 'private' }, text: '/start verify' } }, 'https://kometa.test/tg-verify.html'));
+  assert.equal(calls[0].method, 'sendMessage');
+  assert.match(calls[0].body.text, /Kometa Exchange/);
+  assert.equal(calls[0].body.reply_markup.inline_keyboard[0][0].web_app.url, 'https://kometa.test/tg-verify.html');
+});
+
+test('в группе бот молчит: форму с паспортом туда не зовём', async () => {
+  const calls = await withTelegramCalls(() => handleUpdate(
+    { message: { chat: { id: -100, type: 'supergroup' }, text: 'привет' } }, 'https://kometa.test/tg-verify.html'));
+  assert.equal(calls.length, 0);
+});
