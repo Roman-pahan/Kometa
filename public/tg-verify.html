@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Верификация — Kometa Exchange</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <meta name="theme-color" content="#080E22">
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    main.container { max-width: 640px; padding-top: 16px; padding-bottom: 32px; }
+    .tg-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+    .tg-head img { width: 28px; height: 28px; }
+    .grid2 { grid-template-columns: 1fr; }
+  </style>
+</head>
+<body>
+  <!--
+    Форма верификации, которая открывается из бота Kometa внутри Telegram.
+
+    Почты и пароля тут нет: кто открыл форму, подтверждает Telegram подписью на
+    данных запуска. Они приходят в адресе страницы и уходят на сервер заголовком
+    при каждом запросе. Чужих скриптов страница не грузит — данные запуска
+    читаются из адреса напрямую, как это делает и библиотека Telegram.
+  -->
+  <main class="container">
+    <div class="tg-head">
+      <img src="/logo.svg" alt="">
+      <h2 style="margin:0">Верификация Kometa Exchange</h2>
+    </div>
+
+    <div class="card">
+      <div class="flex">
+        <span>Статус: <span class="badge" id="verifyBadge">…</span></span>
+      </div>
+      <p class="msg" id="statusNote" style="margin-top:10px"></p>
+
+      <div id="verifyForm" style="display:none">
+        <p class="muted small mt">Заполните данные и сделайте фото паспорта и лица <b>с камеры</b>.
+          Данные увидит только оператор Kometa.</p>
+        <div class="grid2 mt">
+          <label class="field"><span>ФИО (как в паспорте) *</span>
+            <input type="text" id="verFullName" placeholder="Иванов Иван Иванович" autocomplete="name"></label>
+          <label class="field"><span>Телефон, к которому привязан банк *</span>
+            <input type="tel" id="verPhone" placeholder="+7 900 000-00-00" autocomplete="tel"></label>
+          <label class="field" id="tgField" style="display:none"><span>Ваш Telegram *</span>
+            <input type="text" id="verTelegram" placeholder="@username"></label>
+        </div>
+        <div class="grid2 mt">
+          <div>
+            <span class="muted small">1. Фото паспорта (разворот с фото)</span>
+            <div class="upload-box">
+              <video id="passportVideo" autoplay playsinline muted style="display:none"></video>
+              <img id="passportPreview" alt="" style="display:none">
+              <span id="passportHint">Нажмите «Включить камеру» и покажите паспорт</span>
+            </div>
+            <div class="flex" style="margin-top:8px">
+              <button class="btn small" id="passportCameraBtn">📷 Включить камеру</button>
+              <button class="btn small success" id="passportSnapBtn" style="display:none">Снять</button>
+            </div>
+          </div>
+          <div>
+            <span class="muted small">2. Фото лица</span>
+            <div class="upload-box">
+              <video id="selfieVideo" autoplay playsinline muted style="display:none"></video>
+              <img id="selfiePreview" alt="" style="display:none">
+              <span id="selfieHint">Нажмите «Включить камеру»</span>
+            </div>
+            <div class="flex" style="margin-top:8px">
+              <button class="btn small" id="selfieCameraBtn">📷 Включить камеру</button>
+              <button class="btn small success" id="selfieSnapBtn" style="display:none">Снять</button>
+            </div>
+          </div>
+        </div>
+        <div class="msg" id="verifyMsg"></div>
+        <button class="btn primary mt" id="submitVerifyBtn" style="width:100%">Отправить на проверку</button>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    // ---------- Данные запуска Telegram ----------
+    // Telegram кладёт их в адрес страницы после «#». При обновлении страницы
+    // адрес может их потерять — поэтому держим копию до закрытия окна.
+    function readInitData() {
+      try {
+        const fromHash = new URLSearchParams(location.hash.slice(1)).get('tgWebAppData');
+        if (fromHash) { sessionStorage.setItem('tgInitData', fromHash); return fromHash; }
+        return sessionStorage.getItem('tgInitData') || '';
+      } catch (_) { return ''; }
+    }
+    const INIT_DATA = readInitData();
+
+    // Сказать Telegram, что форма готова, и раскрыть её на весь экран.
+    // Без библиотеки — тем же способом, каким она передаёт события.
+    function tgEvent(type) {
+      try {
+        if (window.TelegramWebviewProxy) window.TelegramWebviewProxy.postEvent(type, '');
+        else if (window.parent !== window) window.parent.postMessage(JSON.stringify({ eventType: type, eventData: '' }), 'https://web.telegram.org');
+      } catch (_) { /* вне Telegram событий нет */ }
+    }
+    tgEvent('web_app_ready');
+    tgEvent('web_app_expand');
+
+    async function api(url, method = 'GET', body) {
+      const headers = { 'X-Tg-Init-Data': INIT_DATA };
+      if (body) headers['Content-Type'] = 'application/json';
+      const res = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Ошибка ${res.status}`);
+      return data;
+    }
+
+    function showMsg(el, text, kind = 'error') { el.className = 'msg ' + kind; el.textContent = text; }
+    function hideMsg(el) { el.className = 'msg'; el.textContent = ''; }
+
+    // ---------- Статус ----------
+    const LABELS = { none: 'Не пройдена', pending: 'На проверке', approved: 'Подтверждена', rejected: 'Отклонена' };
+    const BADGES = { none: 'cancelled', pending: 'awaiting_payment', approved: 'done', rejected: 'cancelled' };
+    let tgUsername = '';
+
+    async function load() {
+      const note = document.getElementById('statusNote');
+      if (!INIT_DATA) {
+        document.getElementById('verifyBadge').textContent = '—';
+        return showMsg(note, 'Эта форма открывается из бота Kometa в Telegram. Запустите бота и нажмите «Пройти верификацию».');
+      }
+      let v;
+      try { v = await api('/api/tg/verification'); }
+      catch (e) { document.getElementById('verifyBadge').textContent = '—'; return showMsg(note, e.message); }
+
+      const badge = document.getElementById('verifyBadge');
+      badge.textContent = LABELS[v.status] || v.status;
+      badge.className = 'badge ' + (BADGES[v.status] || '');
+      tgUsername = v.tg_username || '';
+
+      if (v.status === 'approved') showMsg(note, 'Верификация пройдена ✅ Можно возвращаться в чат с оператором.', 'ok');
+      else if (v.status === 'pending') showMsg(note, 'Документы на проверке. Оператор сообщит результат.', 'warn');
+      else if (v.status === 'rejected') showMsg(note, 'Верификация отклонена' + (v.comment ? ': ' + v.comment : '') + '. Исправьте и отправьте заново.');
+      else hideMsg(note);
+
+      document.getElementById('verifyForm').style.display = (v.status === 'none' || v.status === 'rejected') ? 'block' : 'none';
+      if (v.full_name) document.getElementById('verFullName').value = v.full_name;
+      if (v.phone) document.getElementById('verPhone').value = v.phone;
+      // Telegram известен по подписи — спрашиваем, только если у человека нет username
+      if (!tgUsername) {
+        document.getElementById('tgField').style.display = '';
+        if (v.telegram) document.getElementById('verTelegram').value = '@' + v.telegram;
+      }
+    }
+
+    // ---------- Камера ----------
+    // Загрузка готовых файлов не предусмотрена намеренно: только съёмка.
+    const captured = { passport: null, selfie: null };
+    function setupCamera(kind, facing) {
+      const video = document.getElementById(kind + 'Video');
+      const preview = document.getElementById(kind + 'Preview');
+      const hint = document.getElementById(kind + 'Hint');
+      const cameraBtn = document.getElementById(kind + 'CameraBtn');
+      const snapBtn = document.getElementById(kind + 'SnapBtn');
+      let stream = null;
+
+      cameraBtn.onclick = async () => {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: facing, width: { ideal: 1600 } } });
+          video.srcObject = stream;
+          video.style.display = 'block';
+          preview.style.display = 'none';
+          hint.style.display = 'none';
+          snapBtn.style.display = 'inline-flex';
+          cameraBtn.textContent = '📷 Перезапустить камеру';
+        } catch (e) {
+          showMsg(document.getElementById('verifyMsg'),
+            'Камера недоступна: разрешите Telegram доступ к камере в настройках телефона и откройте форму снова.');
+        }
+      };
+
+      snapBtn.onclick = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        canvas.getContext('2d').drawImage(video, 0, 0);
+        captured[kind] = canvas.toDataURL('image/jpeg', 0.85);
+        if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+        video.style.display = 'none';
+        snapBtn.style.display = 'none';
+        preview.src = captured[kind];
+        preview.style.display = 'block';
+        cameraBtn.textContent = '📷 Переснять';
+      };
+    }
+    setupCamera('passport', 'environment');
+    setupCamera('selfie', 'user');
+
+    // ---------- Отправка ----------
+    document.getElementById('submitVerifyBtn').onclick = async () => {
+      const msg = document.getElementById('verifyMsg');
+      const btn = document.getElementById('submitVerifyBtn');
+      hideMsg(msg);
+      const fullName = document.getElementById('verFullName').value.trim();
+      const phone = document.getElementById('verPhone').value.trim();
+      const telegram = tgUsername || document.getElementById('verTelegram').value.trim();
+      if (!fullName) return showMsg(msg, 'Укажите ФИО');
+      if (!phone) return showMsg(msg, 'Укажите телефон, к которому привязан банк');
+      if (!telegram) return showMsg(msg, 'Укажите ваш Telegram');
+      if (!captured.passport) return showMsg(msg, 'Сделайте фото паспорта с камеры');
+      if (!captured.selfie) return showMsg(msg, 'Сделайте фото лица с камеры');
+      btn.disabled = true;
+      btn.textContent = 'Отправляю…';
+      try {
+        await api('/api/tg/verification', 'POST', {
+          full_name: fullName, phone, telegram, passport: captured.passport, selfie: captured.selfie,
+        });
+        captured.passport = captured.selfie = null;
+        await load();
+      } catch (e) {
+        showMsg(msg, e.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Отправить на проверку';
+      }
+    };
+
+    load();
+  </script>
+</body>
+</html>

@@ -12,6 +12,7 @@ const agent = require('./agent');
 const { buildClientRecap } = require('./order-recap');
 const tracking = require('./tracking');
 const googleAuth = require('./google-auth');
+const tgVerify = require('./tg-verify');
 const { clientIp, rateLimit, reset: resetLimit, hashPassword, hashPasswordSync, verifyPassword, TooBusyError } = require('./security');
 
 const PORT = process.env.PORT || 3210;
@@ -21,10 +22,10 @@ app.set('trust proxy', 1);
 // Версия сервера наружу не сообщается: подсказывать, чем ломать, незачем
 app.disable('x-powered-by');
 
-// Разбор тела запроса. Двадцать пять мегабайт нужны ровно двум адресам, где
+// Разбор тела запроса. Двадцать пять мегабайт нужны ровно тем адресам, где
 // приходят картинки в base64. Всем остальным столько незачем, а открытый на
 // весь сайт лимит — это готовый способ занять память сервера пустыми запросами.
-const HEAVY_BODY_ROUTES = new Set(['/api/verification', '/api/orders']);
+const HEAVY_BODY_ROUTES = new Set(['/api/verification', '/api/tg/verification', '/api/orders']);
 const heavyJson = express.json({ limit: '25mb' });
 const lightJson = express.json({ limit: '200kb' });
 app.use((req, res, next) => (HEAVY_BODY_ROUTES.has(req.path) ? heavyJson : lightJson)(req, res, next));
@@ -35,6 +36,10 @@ app.use((req, res, next) => {
   // По HTTPS браузеру говорим больше сюда не ходить открытым текстом:
   // иначе остаётся окно на первом заходе, когда адрес набран без https.
   if (req.secure) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  // Форму верификации из бота Telegram Web показывает внутри своего окна.
+  // Только ей разрешено жить в кадре, и только у web.telegram.org: в телефоне
+  // и в приложении для компьютера Mini App открывается без кадра вовсе.
+  const insideTelegram = req.path === tgVerify.APP_PATH;
   res.setHeader('Content-Security-Policy', [
     "default-src 'self'",
     // Свои страницы держат скрипты и стили внутри разметки
@@ -46,11 +51,13 @@ app.use((req, res, next) => {
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
-    "frame-ancestors 'none'",
+    insideTelegram ? 'frame-ancestors https://web.telegram.org' : "frame-ancestors 'none'",
   ].join('; '));
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'same-origin');
-  res.setHeader('X-Frame-Options', 'DENY');
+  // Старый заголовок не умеет «только web.telegram.org» — для формы его нет,
+  // её кадр ограничивает строка frame-ancestors выше
+  if (!insideTelegram) res.setHeader('X-Frame-Options', 'DENY');
   next();
 });
 
@@ -956,14 +963,65 @@ function deleteUpload(name) {
   } catch (_) {}
 }
 
-app.get('/api/verification', requireAuth, (req, res) => {
+// ---------- Клиент из бота верификации ----------
+
+// Пускает клиента, открывшего форму из бота верификации в Telegram.
+//
+// Вход без пароля и без почты: кто он, подтверждает подпись Telegram на данных
+// запуска. Данные приходят заголовком в каждом запросе, а не кукой — в кадре
+// web.telegram.org куки сайта браузер считает чужими и не отдаёт.
+//
+// На каждый Telegram заводится своя учётка. С учёткой, заведённой по почте,
+// она не склеивается сама: иначе любой, вписавший чужую почту, подложил бы
+// документы в чужой кабинет.
+function requireTgUser(req, res, next) {
+  const check = tgVerify.validateInitData(req.get('X-Tg-Init-Data'));
+  if (!check.ok) return res.status(401).json({ error: 'Откройте форму из бота Kometa в Telegram' });
+  const tgUser = check.user;
+  // Username в Telegram — латиница, цифры и подчёркивание; прочее отбрасываем
+  const username = String(tgUser.username || '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 64);
+  const find = () => db.prepare('SELECT id, email, blocked, tg_id, tg_username FROM users WHERE tg_id = ?').get(tgUser.id);
+  let user = find();
+  if (!user) {
+    const name = [tgUser.first_name, tgUser.last_name].filter(Boolean).join(' ').slice(0, 100);
+    try {
+      // Почта-заглушка: колонка обязательна, а писем такой учётке не шлём.
+      // Домен .local зарезервирован и наружу не уходит.
+      db.prepare(`INSERT INTO users (email, name, pass_hash, pass_salt, tg_id, tg_username) VALUES (?, ?, '', ?, ?, ?)`)
+        .run(`tg-${tgUser.id}@telegram.local`, name, crypto.randomBytes(16).toString('hex'), tgUser.id, username);
+    } catch (e) {
+      // Два первых запроса пришли разом: учётку уже завёл соседний
+      if (!String(e.message).includes('UNIQUE')) throw e;
+    }
+    user = find();
+  } else if (username !== (user.tg_username || '')) {
+    db.prepare('UPDATE users SET tg_username = ? WHERE id = ?').run(username, user.id);
+    user.tg_username = username;
+  }
+  if (user.blocked) return res.status(403).json({ error: 'Доступ закрыт. Напишите оператору в Telegram.' });
+  req.user = user;
+  next();
+}
+
+// Как клиента подписать в уведомлении: у пришедшего из бота почта — заглушка
+function clientLabel(user) {
+  if (!user.tg_id) return user.email;
+  return 'Telegram ' + (user.tg_username ? '@' + user.tg_username : 'id ' + user.tg_id);
+}
+
+function getVerification(req, res) {
   const u = db.prepare(`SELECT verify_status, verify_comment, verify_submitted_at,
     full_name, phone, telegram FROM users WHERE id = ?`).get(req.user.id);
   res.json({
     status: u.verify_status, comment: u.verify_comment || '', submitted_at: u.verify_submitted_at,
     full_name: u.full_name || '', phone: u.phone || '', telegram: u.telegram || '',
+    // Telegram, подтверждённый подписью: форме из бота поле вводить не нужно
+    tg_username: req.user.tg_id ? req.user.tg_username || '' : undefined,
   });
-});
+}
+
+app.get('/api/verification', requireAuth, getVerification);
+app.get('/api/tg/verification', requireTgUser, getVerification);
 
 // Каждая отправка кладёт на диск две картинки. Прежние удаляются, но перебирать
 // их без счёта незачем: пять попыток в сутки покрывают любую переснятую фотографию.
@@ -972,13 +1030,15 @@ const limitVerification = rateLimit({
   message: 'Сегодня документы отправлялись уже пять раз. Напишите нам в Telegram.',
 });
 
-app.post('/api/verification', requireAuth, limitVerification, (req, res) => {
+function postVerification(req, res) {
   const u = db.prepare('SELECT verify_status, verify_passport, verify_selfie FROM users WHERE id = ?').get(req.user.id);
   if (u.verify_status === 'approved') return res.status(400).json({ error: 'Верификация уже пройдена' });
 
   const fullName = String(req.body?.full_name || '').trim();
   const phone = String(req.body?.phone || '').trim();
-  const telegram = String(req.body?.telegram || '').trim().replace(/^@/, '');
+  // Из бота Telegram известен точно — берём его, а не то, что вписано в форму.
+  // Без username у человека в Telegram остаётся только то, что он указал сам.
+  const telegram = (req.user.tg_id && req.user.tg_username) || String(req.body?.telegram || '').trim().replace(/^@/, '');
   if (fullName.split(/\s+/).length < 2) return res.status(400).json({ error: 'Укажите полные ФИО (фамилия и имя обязательны)' });
   if (phone.replace(/\D/g, '').length < 10) return res.status(400).json({ error: 'Укажите корректный номер телефона, к которому привязан банк' });
   if (!telegram) return res.status(400).json({ error: 'Укажите ваш Telegram' });
@@ -996,16 +1056,21 @@ app.post('/api/verification', requireAuth, limitVerification, (req, res) => {
     .run(passport.name, selfie.name, fullName, phone, telegram, req.user.id);
   // Ссылка открывает админку сразу на вкладке верификации, где ждёт заявка
   const verifyLink = `${publicBase(req)}/admin.html#verify`;
-  notifyAdminSafe(`🪪 <b>Новая верификация</b>\n${escapeHtml(fullName)}\n${escapeHtml(req.user.email)}\n` +
+  notifyAdminSafe(`🪪 <b>Новая верификация</b>${req.user.tg_id ? ' (из бота)' : ''}\n` +
+    `${escapeHtml(fullName)}\n${escapeHtml(clientLabel(req.user))}\n` +
     `Телефон: ${escapeHtml(phone)}\nTelegram: @${escapeHtml(telegram)}\n\n` +
     `<a href="${verifyLink}">Проверить в админке</a>`);
   res.json({ ok: true });
-});
+}
+
+app.post('/api/verification', requireAuth, limitVerification, postVerification);
+app.post('/api/tg/verification', requireTgUser, limitVerification, postVerification);
 
 app.get('/api/admin/verifications', requireAdmin, (req, res) => {
   const users = db.prepare(`
     SELECT id, email, name, full_name, phone, telegram, verify_status, verify_comment, verify_submitted_at,
-      (verify_passport IS NOT NULL) AS has_passport, (verify_selfie IS NOT NULL) AS has_selfie
+      (verify_passport IS NOT NULL) AS has_passport, (verify_selfie IS NOT NULL) AS has_selfie,
+      tg_id, tg_username
     FROM users WHERE verify_status != 'none'
     ORDER BY CASE verify_status WHEN 'pending' THEN 0 ELSE 1 END, verify_submitted_at DESC
   `).all();
@@ -1699,4 +1764,8 @@ function housekeeping() {
 housekeeping();
 setInterval(housekeeping, 24 * 60 * 60 * 1000).unref();
 startAutoRefresh();
+// Бот верификации. Без токена он выключен, сайт работает как раньше. Адрес
+// для кнопки берётся из PUBLIC_URL: Mini App открывается только по https.
+tgVerify.mount(app, { baseUrl: (process.env.PUBLIC_URL || '').trim().replace(/\/+$/, '') });
+
 app.listen(PORT, () => console.log(`[server] http://localhost:${PORT}`));

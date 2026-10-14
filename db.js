@@ -155,6 +155,10 @@ for (const sql of [
   // Чем назначается цена направления: bot — присланной ботом, margin — своей
   // маржой от себестоимости, manual — вписанным вручную курсом
   "ALTER TABLE directions ADD COLUMN price_mode TEXT NOT NULL DEFAULT 'bot'",
+  // Клиент, пришедший через бота верификации: его Telegram, подтверждённый
+  // подписью самого Telegram, а не набранный руками в анкете
+  'ALTER TABLE users ADD COLUMN tg_id INTEGER',
+  "ALTER TABLE users ADD COLUMN tg_username TEXT DEFAULT ''",
 ]) {
   try { db.exec(sql); } catch (_) { /* колонка уже существует */ }
 }
@@ -164,6 +168,8 @@ for (const sql of [
 db.exec(`UPDATE sessions SET expires_at = datetime(created_at, '+30 days') WHERE expires_at IS NULL`);
 db.exec('DELETE FROM sessions WHERE expires_at <= datetime(\'now\')');
 db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at)');
+// Один Telegram — одна учётка: иначе повторный заход из бота плодил бы клиентов
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_tg ON users(tg_id) WHERE tg_id IS NOT NULL');
 
 // Направления, где до появления режимов стоял ручной курс, остаются ручными:
 // прежде наличие manual_rate само по себе означало «считать по нему».

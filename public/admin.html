@@ -524,8 +524,9 @@
       document.getElementById('verifyList').innerHTML = users.map(u => `
         <div class="card" style="margin-bottom:16px" data-id="${u.id}" data-tg="${esc(u.telegram || '')}">
           <div class="flex">
-            <b>${esc(u.email)}</b>
+            <b>${u.tg_id ? 'Из бота · ' + (u.tg_username ? '@' + esc(u.tg_username) : 'id ' + esc(String(u.tg_id))) : esc(u.email)}</b>
             <span class="badge ${VERIFY_BADGE[u.verify_status]}">${VERIFY_LABELS[u.verify_status]}</span>
+            ${u.tg_id ? `<span class="muted small" title="Telegram подтвердил, кто открыл форму">Telegram ✓ id ${esc(String(u.tg_id))}</span>` : ''}
             <span class="grow"></span>
             <span class="muted small">${u.verify_submitted_at ? 'Отправлено: ' + fmtDate(u.verify_submitted_at) : ''}</span>
           </div>
